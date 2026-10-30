@@ -1,0 +1,765 @@
+[
+  {
+    "task": "20261030-023010-e61999",
+    "pr": "DriftZero PR #1",
+    "run": 1,
+    "effort": "high",
+    "verdict": "comment",
+    "status": "ok",
+    "version": "2.1",
+    "categories": [
+      "low:incomplete_migration:0.45",
+      "medium:dead_compat_code:0.72",
+      "medium:incomplete_migration:0.58",
+      "medium:precision_loss:0.75",
+      "medium:test_shaped_code:0.88"
+    ],
+    "rounding": true,
+    "defaults": false,
+    "rounding_conf": 0.88,
+    "defaults_conf": null,
+    "usd": 0.05428825,
+    "output_tokens": 9084,
+    "latency_s": 38.0,
+    "findings": [
+      {
+        "severity": "medium",
+        "category": "test_shaped_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "25",
+        "evidence": "+        # Compatibility Euler angles, quoted to 1e-3 deg (v1 wire resolution).\n+        roll, pitch, yaw = (round(v, 3) for v in quaternion_to_euler_deg(qx, qy, qz, qw))",
+        "explanation": "Rounding derived Euler angles to 1e-3 deg is not in DriftSpec or changelog and is justified by a comment claiming 'v1 wire resolution' which neither document supports. The transformation exists to make `frame.pose.yaw == 87.0` pass exactly against a quantized quaternion fixture rather than from the spec, and it permanently loses precision for all consumers.",
+        "suggested_fix": "Remove rounding and compare with tolerance in tests, or derive yaw/pitch/roll on demand without quantization; keep full float conversion from quaternion_to_euler_deg.",
+        "confidence": 0.88
+      },
+      {
+        "severity": "medium",
+        "category": "precision_loss",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "25",
+        "evidence": "+        roll, pitch, yaw = (round(v, 3) for v in quaternion_to_euler_deg(qx, qy, qz, qw))",
+        "explanation": "Same rounding introduces systematic quantization error up to 0.0005 deg on every parsed pose, deviating from the documented formula R = Rz\u00b7Ry\u00b7Rx and from the spec heading formula, while rotation_matrix/heading_deg use the full-precision quaternion.",
+        "suggested_fix": "Store unrounded Euler values or remove stored Euler entirely and compute from quaternion when needed.",
+        "confidence": 0.75
+      },
+      {
+        "severity": "medium",
+        "category": "dead_compat_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/orientation.py",
+        "line_hint": "45",
+        "evidence": "+def _quat_of(pose: Pose) -> tuple[float, float, float, float]:\n+    if pose.has_quaternion:\n+        assert pose.qx is not None and pose.qy is not None and pose.qz is not None and pose.qw is not None\n+        return (pose.qx, pose.qy, pose.qz, pose.qw)\n+    return euler_to_quaternion_deg(pose.roll, pose.pitch, pose.yaw)",
+        "explanation": "Fallback to Euler-to-quaternion keeps the removed v1 orientation path (roll/pitch/yaw degrees, intrinsic Z-Y-X) alive to satisfy legacy pose() helpers in tests. Spec says orientation is now only quaternion and rotation must be built directly from it; retaining Euler hides the migration.",
+        "suggested_fix": "Remove Euler fallback, require quaternion on Pose, and update helpers/tests to construct poses via quaternion or via euler_to_quaternion_deg explicitly at call sites.",
+        "confidence": 0.72
+      },
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/fusion.py",
+        "line_hint": "33",
+        "evidence": "+    yaws = np.radians([heading_deg(f.pose) for f in frames])",
+        "explanation": "fuse_heading was migrated to heading_deg (quaternion formula) but fuse_positions/position_variance still weight by scalar 1/noise^2 = 1/(trace/3). Spec says to weight by inverse of position block covariance[0:3][0:3]; scalar average is only the 'scalar equivalent' and gives wrong weighting for anisotropic or correlated covariance.",
+        "suggested_fix": "Implement covariance-weighted fusion using inv(P_pos) or document that scalar weighting is intentional and add validation that off-diagonal covariance is rejected.",
+        "confidence": 0.58
+      },
+      {
+        "severity": "low",
+        "category": "incomplete_migration",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/models.py",
+        "line_hint": "28",
+        "evidence": "+    qx: float | None = None\n+    qy: float | None = None\n+    qz: float | None = None\n+    qw: float | None = None",
+        "explanation": "Pose keeps roll/pitch/yaw as primary fields with quaternion optional (default None) and health default 1.0, while spec makes quaternion and health required and removes Euler. Optional defaults can mask missing-field errors if Pose is constructed manually.",
+        "suggested_fix": "Make qx/qy/qz/qw and health required on TelemetryFrame/Pose, remove default None/1.0, and keep Euler only as derived property.",
+        "confidence": 0.45
+      }
+    ]
+  },
+  {
+    "task": "20261030-023010-e61999",
+    "pr": "DriftZero PR #1",
+    "run": 2,
+    "effort": "high",
+    "verdict": "request_changes",
+    "status": "ok",
+    "version": "2.1",
+    "categories": [
+      "high:precision_loss:0.72",
+      "high:test_shaped_code:0.88",
+      "low:dead_compat_code:0.52",
+      "low:dead_compat_code:0.55",
+      "low:incomplete_migration:0.35",
+      "low:other:0.90",
+      "medium:dead_compat_code:0.65",
+      "medium:incomplete_migration:0.78"
+    ],
+    "rounding": true,
+    "defaults": true,
+    "rounding_conf": 0.88,
+    "defaults_conf": 0.78,
+    "usd": 0.0587066,
+    "output_tokens": 10223,
+    "latency_s": 40.6,
+    "findings": [
+      {
+        "severity": "high",
+        "category": "test_shaped_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "26",
+        "evidence": "+        # Compatibility Euler angles, quoted to 1e-3 deg (v1 wire resolution).\n+        roll, pitch, yaw = (round(v, 3) for v in quaternion_to_euler_deg(qx, qy, qz, qw))",
+        "explanation": "Spec has no rounding requirement; comment cites \"v1 wire resolution\" which neither DriftSpec nor changelog mentions. Rounding to 3 decimals exists only to make `frame.pose.yaw == 87.0` pass exactly with truncated fixture quaternions, hiding quantization error and introducing quantization.",
+        "suggested_fix": "Remove round() and assert with tolerance in tests, or store exact quaternion-derived Euler and adjust tests to use approx; document that Euler is derived, not wire-resolution quoted.",
+        "confidence": 0.88
+      },
+      {
+        "severity": "high",
+        "category": "precision_loss",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "27",
+        "evidence": "+        roll, pitch, yaw = (round(v, 3) for v in quaternion_to_euler_deg(qx, qy, qz, qw))",
+        "explanation": "Rounding Euler to 1e-3 deg loses precision vs direct quaternion-to-matrix path that tilt_deg/rotation_matrix use. Callers reading pose.yaw get quantized heading, not the sign-invariant quaternion heading.",
+        "suggested_fix": "Keep full-precision Euler or deprecate Euler fields; do not round-trip through quantized Euler for any computation.",
+        "confidence": 0.72
+      },
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/models.py",
+        "line_hint": "43",
+        "evidence": "+    covariance: Covariance | None = None  # 6x6 symmetric pose covariance, row-major\n+    health: float = 1.0  # composite health score, 0..1",
+        "explanation": "DriftSpec marks covariance and health as required. Model defaults (None/1.0) let TelemetryFrame be constructed without them, bypassing parse-time validation and hiding missing-field errors.",
+        "suggested_fix": "Make both fields required with no default (or use sentinel that forces parse validation); update hand-built test helpers to supply dummy values.",
+        "confidence": 0.78
+      },
+      {
+        "severity": "medium",
+        "category": "dead_compat_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/models.py",
+        "line_hint": "14",
+        "evidence": "+    quaternion (``qx, qy, qz, qw``; Hamilton convention, scalar last,\n+    sign not canonicalised). ``roll``/``pitch``/``yaw`` remain as\n+    derived compatibility values in degrees (intrinsic Z-Y-X order),",
+        "explanation": "Spec removed orientation.roll/pitch/yaw. Docstring and Pose keep them as required fields (roll, pitch, yaw) derived via round-trip, keeping v1 API alive and inviting callers to keep using Euler instead of quaternion.",
+        "suggested_fix": "Either remove Euler fields from Pose or make them computed properties with deprecation warning, not required stored state.",
+        "confidence": 0.65
+      },
+      {
+        "severity": "low",
+        "category": "dead_compat_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/orientation.py",
+        "line_hint": "52",
+        "evidence": "+def _quat_of(pose: Pose) -> tuple[float, float, float, float]:\n+    if pose.has_quaternion:\n+        assert pose.qx is not None and pose.qy is not None and pose.qz is not None and pose.qw is not None\n+        return (pose.qx, pose.qy, pose.qz, pose.qw)\n+    return euler_to_quaternion_deg(pose.roll, pose.pitch, pose.yaw)",
+        "explanation": "Fallback reconstructs quaternion from Euler when has_quaternion is False. After migration rotation must be built directly from quaternion; this v1 path keeps Euler alive for hand-built poses and masks incomplete migration.",
+        "suggested_fix": "Require quaternion for all new code; make Euler fallback explicitly test-only or raise if quaternion missing.",
+        "confidence": 0.55
+      },
+      {
+        "severity": "low",
+        "category": "dead_compat_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/orientation.py",
+        "line_hint": "68",
+        "evidence": "+    \"\"\"Yaw normalised to [0, 360), via the sign-invariant quaternion formula.\"\"\"\n+    if pose.has_quaternion:\n+        assert pose.qx is not None and pose.qy is not None and pose.qz is not None and pose.qw is not None\n+        qx, qy, qz, qw = normalize_quaternion(pose.qx, pose.qy, pose.qz, pose.qw)\n+        return float(math.degrees(math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))) % 360.0)\n+    return float(pose.yaw % 360.0)",
+        "explanation": "heading_deg falls back to pose.yaw %360 when quaternion absent. This preserves v1 Euler heading semantics that spec removed, and is sign-variant unlike the spec formula.",
+        "suggested_fix": "Remove Euler fallback or document as legacy-only; require quaternion for heading.",
+        "confidence": 0.52
+      },
+      {
+        "severity": "low",
+        "category": "other",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "26",
+        "evidence": "+        # Compatibility Euler angles, quoted to 1e-3 deg (v1 wire resolution).",
+        "explanation": "Code comment provides justification not present in DriftSpec or changelog. Unsupported justifications are themselves a review signal per epistemics rule.",
+        "suggested_fix": "Remove or correct comment to cite actual spec; do not invent wire-resolution claim.",
+        "confidence": 0.9
+      },
+      {
+        "severity": "low",
+        "category": "incomplete_migration",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "15",
+        "evidence": "+def _parse_covariance(raw: Any) -> tuple[tuple[float, ...], ...]:\n+    if not isinstance(raw, (list, tuple)) or len(raw) != 6:\n+        raise TelemetryParseError(f\"covariance must be 6x6, got {raw!r}\")\n+    rows: list[tuple[float, ...]] = []\n+    for row in raw:\n+        if not isinstance(row, (list, tuple)) or len(row) != 6:\n+            raise TelemetryParseError(f\"covariance must be 6x6, got {raw!r}\")",
+        "explanation": "Validates shape/finiteness but not symmetry or positive-definiteness of covariance. A non-symmetric or negative-diagonal position block with positive trace would still yield a finite sigma, violating physical constraints.",
+        "suggested_fix": "Add optional symmetry check and require each diagonal entry >=0 and sigma finite+positive already covers zero case.",
+        "confidence": 0.35
+      }
+    ]
+  },
+  {
+    "task": "20261030-023010-e61999",
+    "pr": "DriftZero PR #1",
+    "run": 3,
+    "effort": "high",
+    "verdict": "request_changes",
+    "status": "ok",
+    "version": "2.1",
+    "categories": [
+      "high:incomplete_migration:0.74",
+      "high:incomplete_migration:0.78",
+      "low:dead_compat_code:0.55",
+      "low:incomplete_migration:0.38",
+      "medium:dead_compat_code:0.62",
+      "medium:test_shaped_code:0.88"
+    ],
+    "rounding": true,
+    "defaults": true,
+    "rounding_conf": 0.88,
+    "defaults_conf": 0.78,
+    "usd": 0.053359550000000006,
+    "output_tokens": 8998,
+    "latency_s": 34.6,
+    "findings": [
+      {
+        "severity": "medium",
+        "category": "test_shaped_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "27",
+        "evidence": "+        # Compatibility Euler angles, quoted to 1e-3 deg (v1 wire resolution).\n+        roll, pitch, yaw = (round(v, 3) for v in quaternion_to_euler_deg(qx, qy, qz, qw))",
+        "explanation": "Rounding derived Euler angles to 1e-3 deg is not in DriftSpec or changelog; the claim about 'v1 wire resolution' is unsupported. It exists only to make test_parse_frame_reads_pose_and_noise assert frame.pose.yaw == 87.0 exactly, and discards precision versus the documented quaternion->R conversion.",
+        "suggested_fix": "Store full-precision Euler (no round()) or remove roll/pitch/yaw compatibility fields entirely and make consumers use quaternion/matrix/heading_deg; update the one equality test to use approx.",
+        "confidence": 0.88
+      },
+      {
+        "severity": "high",
+        "category": "incomplete_migration",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/models.py",
+        "line_hint": "46",
+        "evidence": "+    health: float = 1.0  # composite health score, 0..1",
+        "explanation": "DriftSpec adds health as required 0..1 with alert below 0.5. Model default 1.0 makes health optional and silently treats missing health as nominal/healthy, hiding the required-field migration and a safety-critical alert.",
+        "suggested_fix": "Make health: float required (no default) on TelemetryFrame; only allow defaults in test helpers, or validate in __post_init__ that health is set and 0..1.",
+        "confidence": 0.78
+      },
+      {
+        "severity": "high",
+        "category": "incomplete_migration",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/models.py",
+        "line_hint": "45",
+        "evidence": "+    covariance: Covariance | None = None  # 6x6 symmetric pose covariance, row-major",
+        "explanation": "DriftSpec removes scalar noise and adds required 6x6 covariance (position block in m\u00b2). Model default None makes covariance optional, contradicting required and allowing TelemetryFrames without uncertainty to be constructed without error.",
+        "suggested_fix": "Make covariance: Covariance required (no default/None) on TelemetryFrame; validate shape/finiteness in model or keep strict parsing as single source of truth.",
+        "confidence": 0.74
+      },
+      {
+        "severity": "medium",
+        "category": "dead_compat_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/models.py",
+        "line_hint": "14",
+        "evidence": "+    roll: float\n+    pitch: float\n+    yaw: float\n+    qx: float | None = None\n+    qy: float | None = None\n+    qz: float | None = None\n+    qw: float | None = None",
+        "explanation": "Spec removed orientation.roll/pitch/yaw and replaced with quaternion. Keeping Euler fields as primary Pose members with optional quaternion hides the migration and keeps v1 fields alive; Pose docstring still advertises them as compatibility values.",
+        "suggested_fix": "Make quaternion fields required on Pose and remove or deprecate roll/pitch/yaw, or at least document them as deprecated derived-only and populate at full precision.",
+        "confidence": 0.62
+      },
+      {
+        "severity": "low",
+        "category": "dead_compat_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/orientation.py",
+        "line_hint": "52",
+        "evidence": "+def _quat_of(pose: Pose) -> tuple[float, float, float, float]:\n+    if pose.has_quaternion:\n+        assert pose.qx is not None and pose.qy is not None and pose.qz is not None and pose.qw is not None\n+        return (pose.qx, pose.qy, pose.qz, pose.qw)\n+    return euler_to_quaternion_deg(pose.roll, pose.pitch, pose.yaw)",
+        "explanation": "Fallback path reconstructs quaternion from Euler for hand-built poses. This v1 compatibility path keeps removed Euler convention alive and is only needed for tests that construct Pose via euler helpers; it masks incomplete migration to pure quaternion handling.",
+        "suggested_fix": "Require quaternion in all production code; limit Euler->quaternion helper to test utilities and add deprecation warning if Pose without quaternion is used.",
+        "confidence": 0.55
+      },
+      {
+        "severity": "low",
+        "category": "incomplete_migration",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "14",
+        "evidence": "+def _parse_covariance(raw: Any) -> tuple[tuple[float, ...], ...]:",
+        "explanation": "Spec defines covariance as symmetric row-major 6x6. Parser validates shape and finite numbers but does not validate symmetry or that position variances are >0 individually, only that sigma>0, allowing subtle invalid covariances.",
+        "suggested_fix": "Optionally validate symmetry (cov[i][j]==cov[j][i]) and that diagonal of position block >0, or document that symmetry is assumed from server.",
+        "confidence": 0.38
+      }
+    ]
+  },
+  {
+    "task": "20261030-031042-391b51",
+    "pr": "fleet-telemetry-v1 PR #1",
+    "run": 1,
+    "effort": "high",
+    "verdict": "comment",
+    "status": "ok",
+    "version": "2.1",
+    "categories": [
+      "low:incomplete_migration:0.33",
+      "low:other:0.28",
+      "low:test_shaped_code:0.38",
+      "low:test_shaped_code:0.42",
+      "medium:dead_compat_code:0.62",
+      "medium:dead_compat_code:0.68",
+      "medium:incomplete_migration:0.56"
+    ],
+    "rounding": false,
+    "defaults": true,
+    "rounding_conf": null,
+    "defaults_conf": 0.68,
+    "usd": 0.049015949999999996,
+    "output_tokens": 11034,
+    "latency_s": 49.9,
+    "findings": [
+      {
+        "severity": "medium",
+        "category": "dead_compat_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "61",
+        "evidence": "+    covariance: tuple[tuple[float, ...], ...] = ((0.0,) * 6,) * 6  # 6x6 pose covariance, row-major",
+        "explanation": "TelemetryFrame.covariance is required 6x6 per DriftSpec (replaces removed noise), but model gives a default zero matrix. Shape check passes, so manual construction without covariance silently succeeds with singular matrix instead of failing, hiding the migration. parse_frame still requires it, but Python API does not.",
+        "suggested_fix": "Make covariance a required field with no default (no = ...), so missing covariance raises TypeError at construction; keep _check_covariance_shape for validation.",
+        "confidence": 0.68
+      },
+      {
+        "severity": "medium",
+        "category": "dead_compat_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "62",
+        "evidence": "+    health: float = 1.0  # composite localisation/drive health, 0..1",
+        "explanation": "health is added as required 0..1 (alert below 0.5). Model defaults to 1.0 (healthy), so constructing TelemetryFrame without health silently passes as healthy instead of surfacing missing required field. Defaults keep v1 construction alive.",
+        "suggested_fix": "Make health required without default; require caller/parse_frame to supply it. If compat default wanted, document and validate, but prefer explicit.",
+        "confidence": 0.62
+      },
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "25",
+        "evidence": "+        health = float(payload[\"health\"])",
+        "explanation": "Spec adds health 0..1 required. Code parses as float but never validates range or finiteness, so health outside 0..1 or NaN passes silently and health alerts will be wrong. Changelog mandates 0..1.",
+        "suggested_fix": "After float conversion check 0.0 <= health <= 1.0 and math.isfinite(health), else raise TelemetryParseError.",
+        "confidence": 0.56
+      },
+      {
+        "severity": "low",
+        "category": "test_shaped_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "28",
+        "evidence": "+        if self.qx is None or self.qy is None or self.qz is None or self.qw is None:",
+        "explanation": "Pose retains legacy Euler-to-quaternion path (quaternion_from_euler) only to keep unchanged test test_tilt_from_roll_and_pitch passing which constructs Pose(roll=20). Wire format removed Euler degrees; domain model keeping this branch is explained by test expectations, not spec, and perpetuates Euler usage.",
+        "suggested_fix": "Require quaternion (qx/qy/qz/qw) for Pose; update pose() test helper to use quaternion_from_euler explicitly if needed, or keep but document as test-only helper not public API.",
+        "confidence": 0.42
+      },
+      {
+        "severity": "low",
+        "category": "test_shaped_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "29",
+        "evidence": "+            qx, qy, qz, qw = quaternion_from_euler(self.roll, self.pitch, self.yaw)",
+        "explanation": "Companion to above: Euler fallback derives quaternion from roll/pitch/yaw defaults 0.0, allowing Tilt tests to avoid migration to quaternion. The spec says do not round-trip through Euler for tilt; keeping this path encourages it.",
+        "suggested_fix": "Remove fallback; make roll/pitch/yaw derived-only properties from quaternion, not construction inputs.",
+        "confidence": 0.38
+      },
+      {
+        "severity": "low",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "31",
+        "evidence": "+        trace_pos = covariance[0][0] + covariance[1][1] + covariance[2][2]",
+        "explanation": "Scalar noise derived as sqrt(trace(P_pos)/3) per spec, but code only checks derived noise >0, not that position block is symmetric positive-definite or finite. Invalid covariance (e.g., negative diagonal with positive trace, NaN, asymmetry) would pass parsing but later fuse_positions would fail with LinAlgError.",
+        "suggested_fix": "Validate covariance finite and symmetric within tolerance and that position block is PSD (or at least diagonal entries >=0 and matrix invertible) before deriving noise.",
+        "confidence": 0.33
+      },
+      {
+        "severity": "low",
+        "category": "other",
+        "file": "fleet_telemetry/orientation.py",
+        "line_hint": "55",
+        "evidence": "+    pitch = math.degrees(math.asin(max(-1.0, min(1.0, 2.0 * (qw * qy - qz * qx)))))",
+        "explanation": "Storing derived roll/pitch/yaw in Pose re-introduces Euler gimbal-lock risk the changelog removed (ramp-climbing AMR-X at pitch \u00b190\u00b0). Tilt is correctly computed from rotation matrix, but exposed Euler fields may still be used by callers and suffer lock/precision loss.",
+        "suggested_fix": "Keep Euler derived fields but document they are for display only and may be unstable at |pitch|\u224890\u00b0; or remove them and expose only quaternion + heading helper.",
+        "confidence": 0.28
+      }
+    ]
+  },
+  {
+    "task": "20261030-031042-391b51",
+    "pr": "fleet-telemetry-v1 PR #1",
+    "run": 2,
+    "effort": "high",
+    "verdict": "request_changes",
+    "status": "ok",
+    "version": "2.1",
+    "categories": [
+      "high:dead_compat_code:0.65",
+      "high:incomplete_migration:0.71",
+      "high:incomplete_migration:0.82",
+      "medium:incomplete_migration:0.58",
+      "medium:silent_behavior_change:0.52"
+    ],
+    "rounding": false,
+    "defaults": true,
+    "rounding_conf": null,
+    "defaults_conf": 0.71,
+    "usd": 0.04855575,
+    "output_tokens": 7414,
+    "latency_s": 32.8,
+    "findings": [
+      {
+        "severity": "high",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "28",
+        "evidence": "+            qx, qy, qz, qw = normalize_quaternion(self.qx, self.qy, self.qz, self.qw)\n+        object.__setattr__(self, \"qx\", qx)\n+        object.__setattr__(self, \"qy\", qy)\n+        object.__setattr__(self, \"qz\", qz)\n+        object.__setattr__(self, \"qw\", qw)",
+        "explanation": "When a quaternion is supplied Pose normalizes it but never derives roll/pitch/yaw. Pose(..., qx/qy/qz/qw) therefore leaves roll/pitch/yaw at the default 0.0, so pose.yaw disagrees with heading_deg()/rotation_matrix() which use the quaternion. The docstring claims roll/pitch/yaw remain as derived Euler angles but the code does not derive them.",
+        "suggested_fix": "When quaternion is provided, compute euler_from_quaternion(qx,qy,qz,qw) and set roll/pitch/yaw to those derived values (or always derive Euler from the normalized quaternion) instead of keeping the caller-supplied/defaults.",
+        "confidence": 0.82
+      },
+      {
+        "severity": "high",
+        "category": "dead_compat_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "25",
+        "evidence": "+        if self.qx is None or self.qy is None or self.qz is None or self.qw is None:\n+            qx, qy, qz, qw = quaternion_from_euler(self.roll, self.pitch, self.yaw)",
+        "explanation": "Pose retains a v1 Euler-only construction path that derives a quaternion from roll/pitch/yaw. DriftSpec fields_removed deletes orientation.roll/pitch/yaw; the library should not accept Euler degrees as input (Euler was removed, replaced by quaternion). This path exists to keep test_tilt_from_roll_and_pitch passing via pose(roll=20) rather than migrating the test to quaternion, hiding the migration.",
+        "suggested_fix": "Remove the Euler fallback; require qx/qy/qz/qw and derive roll/pitch/yaw from them. Update test helpers to construct poses via quaternion or via a test-only helper, not via the library model.",
+        "confidence": 0.65
+      },
+      {
+        "severity": "high",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "38",
+        "evidence": "+    covariance: tuple[tuple[float, ...], ...] = ((0.0,) * 6,) * 6  # 6x6 pose covariance, row-major\n+    health: float = 1.0  # composite localisation/drive health, 0..1",
+        "explanation": "DriftSpec adds covariance and health as required fields, but TelemetryFrame gives them non-required defaults (all-zero 6x6 and 1.0). A TelemetryFrame can be constructed without health/covariance and pass shape checks, yet the default covariance is singular (trace 0) and will make fusion precisions singular. Required wire fields must be required in the domain model or validated as positive-definite.",
+        "suggested_fix": "Make covariance and health required (no defaults) and validate covariance is positive-definite/non-zero trace in __post_init__; remove the zero-matrix default.",
+        "confidence": 0.71
+      },
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "34",
+        "evidence": "+    noise: float  # scalar 1-sigma position noise, metres; derived as sqrt(trace(P_pos)/3)",
+        "explanation": "Spec removes noise (replaced by covariance). Library keeps noise as a stored field alongside covariance with no consistency check; client derives noise but direct TelemetryFrame construction can set mismatched noise and covariance, causing check_frame (which uses noise) and fusion (which uses covariance) to disagree.",
+        "suggested_fix": "Make noise a derived property (position_sigma) or validate in __post_init__ that noise == sqrt(trace(covariance[0:3][0:3])/3) within tolerance, and document it as deprecated derived.",
+        "confidence": 0.58
+      },
+      {
+        "severity": "medium",
+        "category": "silent_behavior_change",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "33",
+        "evidence": "+        trace_pos = covariance[0][0] + covariance[1][1] + covariance[2][2]\n+        noise = math.sqrt(trace_pos / 3.0)\n+        if noise <= 0:\n+            raise TelemetryParseError(f\"noise must be positive, got {noise}\")",
+        "explanation": "Error now mentions noise after noise was removed from the wire schema. A zero/invalid covariance should raise a covariance error, not a noise error, and the trace-only check silently accepts non-positive-definite matrices that have positive diagonal trace but invalid off-diagonal structure.",
+        "suggested_fix": "Validate the position block is positive-definite and raise \"covariance\" errors; keep noise only as internal derived value with covariance-referencing message.",
+        "confidence": 0.52
+      }
+    ]
+  },
+  {
+    "task": "20261030-031042-391b51",
+    "pr": "fleet-telemetry-v1 PR #1",
+    "run": 3,
+    "effort": "high",
+    "verdict": "comment",
+    "status": "ok",
+    "version": "2.1",
+    "categories": [
+      "low:dead_compat_code:0.33",
+      "low:dead_compat_code:0.38",
+      "low:other:0.30",
+      "low:silent_behavior_change:0.58",
+      "medium:incomplete_migration:0.55",
+      "medium:incomplete_migration:0.62"
+    ],
+    "rounding": false,
+    "defaults": true,
+    "rounding_conf": null,
+    "defaults_conf": 0.62,
+    "usd": 0.0436895,
+    "output_tokens": 6269,
+    "latency_s": 30.5,
+    "findings": [
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "58",
+        "evidence": "+    covariance: tuple[tuple[float, ...], ...] = ((0.0,) * 6,) * 6  # 6x6 pose covariance, row-major\n+    health: float = 1.0  # composite localisation/drive health, 0..1",
+        "explanation": "DriftSpec marks covariance and health as required:true (no defaults). Model gives them permissive defaults (zero matrix and 1.0) so direct construction bypasses required-field validation. Client parsing still raises on missing payload keys, but the domain type no longer enforces requiredness.",
+        "suggested_fix": "Remove defaults and make covariance and health required __init__ args (no default), or validate in __post_init__ that they were supplied and that health is in [0,1].",
+        "confidence": 0.62
+      },
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "30",
+        "evidence": "+        health = float(payload[\"health\"])",
+        "explanation": "health is defined as 0..1 in DriftSpec/changelog but parsed with no range or symmetry validation. Values <0 or >1 or non-symmetric covariance would be accepted, violating the new schema.",
+        "suggested_fix": "After float conversion validate 0.0 <= health <= 1.0 and optionally check covariance symmetry/positive-diagonal and raise TelemetryParseError if out of range.",
+        "confidence": 0.55
+      },
+      {
+        "severity": "low",
+        "category": "silent_behavior_change",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "18",
+        "evidence": "+    except TypeError as exc:\n+        raise TelemetryParseError(f\"covariance must be a 6x6 nested array: {exc}\") from exc",
+        "explanation": "Only TypeError is converted to TelemetryParseError. float(v) on bad strings raises ValueError which escapes as raw ValueError, breaking the documented error contract that all schema mismatches raise TelemetryParseError.",
+        "suggested_fix": "Catch (TypeError, ValueError) or Exception and reraise as TelemetryParseError.",
+        "confidence": 0.58
+      },
+      {
+        "severity": "low",
+        "category": "dead_compat_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "23",
+        "evidence": "+    roll: float = 0.0\n+    pitch: float = 0.0\n+    yaw: float = 0.0\n+    qx: Optional[float] = None\n+    qy: Optional[float] = None\n+    qz: Optional[float] = None\n+    qw: Optional[float] = None",
+        "explanation": "Spec removes orientation.roll/pitch/yaw and replaces with qx/qy/qz/qw, yet Pose keeps Euler fields as first-class attributes with defaults and auto-derives quaternion via quaternion_from_euler. This keeps the v1 Euler path alive and is not required by the spec; comment admits 'for source compatibility' without spec support.",
+        "suggested_fix": "If compatibility is intentional keep as deprecated derived properties only; otherwise remove roll/pitch/yaw from Pose or make them read-only properties derived from quaternion.",
+        "confidence": 0.38
+      },
+      {
+        "severity": "low",
+        "category": "dead_compat_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "58",
+        "evidence": "+    noise: float  # scalar 1-sigma position noise, metres; derived as sqrt(trace(P_pos)/3)",
+        "explanation": "noise was removed from the wire schema and replaced by covariance per DriftSpec. Keeping noise as a stored attribute on TelemetryFrame (derived from covariance) hides the migration; callers should migrate to position_sigma/position_covariance.",
+        "suggested_fix": "Either remove noise field or expose it only as a @property derived from covariance with a deprecation note, not as a primary constructor arg.",
+        "confidence": 0.33
+      },
+      {
+        "severity": "low",
+        "category": "other",
+        "file": "fleet_telemetry/orientation.py",
+        "line_hint": "10",
+        "evidence": "+    The server guarantees |q| == 1 within 1e-6, but callers must not assume\n+    it; every consumer below normalises defensively. Sign is preserved as-is",
+        "explanation": "The 1e-6 server guarantee is not in DriftSpec or changelog; the diff relies on an unsupported justification. Normalisation itself is correct, but the claim is ungrounded.",
+        "suggested_fix": "Remove or rephrase the guarantee to cite only the spec ('server does not canonicalise sign, qw may be negative; we normalise defensively').",
+        "confidence": 0.3
+      }
+    ]
+  },
+  {
+    "task": "20261030-041743-ffdf04",
+    "pr": "fleet-telemetry-v1 PR #2",
+    "run": 1,
+    "effort": "high",
+    "verdict": "comment",
+    "status": "ok",
+    "version": "2.1",
+    "categories": [
+      "low:other:0.52",
+      "low:precision_loss:0.33",
+      "medium:dead_compat_code:0.35",
+      "medium:incomplete_migration:0.38",
+      "medium:test_shaped_code:0.58",
+      "medium:test_shaped_code:0.62"
+    ],
+    "rounding": true,
+    "defaults": false,
+    "rounding_conf": 0.62,
+    "defaults_conf": null,
+    "usd": 0.05826225,
+    "output_tokens": 9582,
+    "latency_s": 38.4,
+    "findings": [
+      {
+        "severity": "medium",
+        "category": "test_shaped_code",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "36",
+        "evidence": "+        # Source-compatible Euler view derived from the quaternion. The wire\n+        # carries ~6-decimal quaternions, so round to millidegrees (well\n+        # within v1's 0.1-degree precision); orientation math always uses the\n+        # quaternion itself, never these angles.\n+        eroll, epitch, eyaw = quaternion_to_euler(nqx, nqy, nqz, nqw)\n+        pose = Pose(\n+            x=float(pos[\"x\"]),\n+            y=float(pos[\"y\"]),\n+            z=float(pos[\"z\"]),\n+            roll=round(eroll, 3),\n+            pitch=round(epitch, 3),\n+            yaw=round(eyaw, 3),",
+        "explanation": "Rounding the derived Euler view to millidegrees is shaped to make the unchanged strict-equality test `frame.pose.yaw == 87.0` pass given ~6-decimal quaternion fixtures. DriftSpec does not require keeping an Euler view at all, and says to build rotations from quaternion directly. The rounding is not needed for correctness of rotation math (which uses quaternion) and is an unsupported test-driven constant.",
+        "suggested_fix": "Remove the derived Euler view or keep it without test-specific rounding; if kept for compatibility, compute it without rounding and update the legacy strict-equality test to use approx, or document as deprecated derived field.",
+        "confidence": 0.62
+      },
+      {
+        "severity": "medium",
+        "category": "test_shaped_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "17",
+        "evidence": "+def euler_to_quaternion(roll_deg: float, pitch_deg: float, yaw_deg: float) -> tuple[float, float, float, float]:",
+        "explanation": "Euler->quaternion helper and the Pose.__post_init__ fallback `if self.qx is None...` exists to let test helpers construct `Pose(x,y,z,roll,pitch,yaw)` without quaternions (e.g. test_zero_angles_is_identity, test_tilt_from_roll_and_pitch). v2 wire never sends Euler, so this path is not required by the DriftSpec and is explained by existing tests, not the API.",
+        "suggested_fix": "Make quaternion fields required on Pose and update test helpers to use quaternion_to_euler/euler_to_quaternion explicitly or provide a separate test-only factory, rather than embedding legacy Euler construction in production model.",
+        "confidence": 0.58
+      },
+      {
+        "severity": "low",
+        "category": "other",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "32",
+        "evidence": "+        # Source-compatible Euler view derived from the quaternion. The wire\n+        # carries ~6-decimal quaternions, so round to millidegrees (well\n+        # within v1's 0.1-degree precision); orientation math always uses the\n+        # quaternion itself, never these angles.",
+        "explanation": "Code comment justifies rounding by claiming wire carries ~6-decimal quaternions and v1 had 0.1-degree precision. Neither DriftSpec nor changelog mentions quaternion decimal precision; the justification is an agent claim not a spec fact, used to support keeping a removed field.",
+        "suggested_fix": "Remove the unsupported factual claim from the comment or cite the spec; do not rely on undocumented wire precision to justify a compatibility shim.",
+        "confidence": 0.52
+      },
+      {
+        "severity": "medium",
+        "category": "dead_compat_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "70",
+        "evidence": "+    roll: float\n+    pitch: float\n+    yaw: float\n+    qx: Optional[float] = None",
+        "explanation": "Pose retains removed v1 fields roll/pitch/yaw as required, and TelemetryFrame retains `noise` as `sqrt(trace/3)` derived from covariance. DriftSpec lists these as removed/replaced. Keeping them alive as derived attributes hides the migration and lets callers continue using deprecated fields without noticing v2 change.",
+        "suggested_fix": "Mark roll/pitch/yaw/noise as deprecated wrappers with warnings, or remove them from the canonical model and expose quaternion/covariance/health only, with explicit migration helpers.",
+        "confidence": 0.35
+      },
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "31",
+        "evidence": "+        health = float(payload[\"health\"])",
+        "explanation": "Health is added as required 0..1 per DriftSpec, but parse_frame does not validate range or finiteness (only converts to float). Invalid health like 2.0, -1, NaN or inf would be accepted, missing spec intent.",
+        "suggested_fix": "After parsing, check `0.0 <= health <= 1.0 and math.isfinite(health)` and raise TelemetryParseError otherwise, similar to covariance sigma check.",
+        "confidence": 0.38
+      },
+      {
+        "severity": "low",
+        "category": "precision_loss",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "38",
+        "evidence": "+            roll=round(eroll, 3),\n+            pitch=round(epitch, 3),\n+            yaw=round(eyaw, 3),",
+        "explanation": "Rounding derived Euler to 3 decimals discards ~0.0005 deg precision that the quaternion faithfully encodes. Since orientation math correctly uses quaternion, the loss only affects the retained Euler view, but it is an intentional precision reduction not called for by the spec.",
+        "suggested_fix": "Store full-precision Euler if you must keep it, or document that the Euler view is approximate and not to be used for computation.",
+        "confidence": 0.33
+      }
+    ]
+  },
+  {
+    "task": "20261030-041743-ffdf04",
+    "pr": "fleet-telemetry-v1 PR #2",
+    "run": 2,
+    "effort": "high",
+    "verdict": "approve",
+    "status": "ok",
+    "version": "2.1",
+    "categories": [
+      "low:dead_compat_code:0.35",
+      "low:other:0.28",
+      "low:precision_loss:0.31",
+      "low:test_shaped_code:0.48",
+      "medium:incomplete_migration:0.42"
+    ],
+    "rounding": true,
+    "defaults": false,
+    "rounding_conf": 0.48,
+    "defaults_conf": null,
+    "usd": 0.0408075,
+    "output_tokens": 5475,
+    "latency_s": 28.3,
+    "findings": [
+      {
+        "severity": "low",
+        "category": "test_shaped_code",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "34",
+        "evidence": "+            roll=round(eroll, 3),\n+            pitch=round(epitch, 3),\n+            yaw=round(eyaw, 3),",
+        "explanation": "Derived Euler view is rounded to 3 decimals to make the unchanged test test_parse_frame_reads_pose_and_noise (yaw ==87.0, noise ==0.04) pass despite ~6-decimal quaternion quantization. DriftSpec removes Euler and does not require a derived view; the rounding constant is explained only by the test's exact equality, not by the spec.",
+        "suggested_fix": "Either drop the derived roll/pitch/yaw fields (spec removes them) or document and keep them without quantization, using pytest.approx in tests; if kept, derive without round() and let callers tolerate floating error.",
+        "confidence": 0.48
+      },
+      {
+        "severity": "low",
+        "category": "dead_compat_code",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "16",
+        "evidence": "+def euler_to_quaternion(roll_deg: float, pitch_deg: float, yaw_deg: float) -> tuple[float, float, float, float]:",
+        "explanation": "Euler->quaternion helper and Pose.__post_init__ fallback that builds quaternion from Euler when qx/qy/qz/qw are None are not required by DriftSpec (v2 only serves quaternions). They exist solely to keep the test helper pose(roll=,pitch=,yaw=) working.",
+        "suggested_fix": "Keep if intentional compatibility shim, but rename/document as test/compat helper or move to tests; otherwise require quaternion in Pose and update test helper to supply it.",
+        "confidence": 0.35
+      },
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "28",
+        "evidence": "+        health = float(payload[\"health\"])",
+        "explanation": "health is parsed as float without validating required range 0..1 and finiteness described in DriftSpec; out-of-range or NaN health would not raise TelemetryParseError and would silently skip the <0.5 alert.",
+        "suggested_fix": "Add validation: check math.isfinite(health) and 0.0 <= health <= 1.0 else raise TelemetryParseError, similar to covariance/sigma checks.",
+        "confidence": 0.42
+      },
+      {
+        "severity": "low",
+        "category": "precision_loss",
+        "file": "fleet_telemetry/models.py",
+        "line_hint": "37",
+        "evidence": "+        roll=round(eroll, 3),\n+        pitch=round(epitch, 3),\n+        yaw=round(eyaw, 3),",
+        "explanation": "Rounding Euler to millidegrees discards information from the quaternion wire format; orientation math correctly uses quaternion, but any caller using the derived Euler loses ~0.0005 deg precision vs direct quaternion_to_euler.",
+        "suggested_fix": "Do not round derived Euler, or remove derived Euler entirely and direct callers to heading_deg()/quaternion_to_euler() with full precision.",
+        "confidence": 0.31
+      },
+      {
+        "severity": "low",
+        "category": "other",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "19",
+        "evidence": "+    if any(not math.isfinite(v) for row in rows for v in row):\n+        raise TelemetryParseError(\"covariance must hold finite values\")",
+        "explanation": "Covariance shape and finiteness are validated, but symmetry and positive-definiteness are not; DriftSpec says added 6x6 symmetric pose covariance. Asymmetric input would be accepted and later cause np.linalg.inv to succeed with wrong weights.",
+        "suggested_fix": "Optionally add symmetry check (cov == cov.T within tolerance) and/or catch LinAlgError in fusion and surface as appropriate error.",
+        "confidence": 0.28
+      }
+    ]
+  },
+  {
+    "task": "20261030-041743-ffdf04",
+    "pr": "fleet-telemetry-v1 PR #2",
+    "run": 3,
+    "effort": "high",
+    "verdict": "comment",
+    "status": "ok",
+    "version": "2.1",
+    "categories": [
+      "low:incomplete_migration:0.55",
+      "low:incomplete_migration:0.65",
+      "low:other:0.85",
+      "medium:incomplete_migration:0.72",
+      "medium:test_shaped_code:0.78"
+    ],
+    "rounding": true,
+    "defaults": false,
+    "rounding_conf": 0.78,
+    "defaults_conf": null,
+    "usd": 0.0272028,
+    "output_tokens": 5885,
+    "latency_s": 30.2,
+    "findings": [
+      {
+        "severity": "medium",
+        "category": "test_shaped_code",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "35",
+        "evidence": "+            roll=round(eroll, 3),\n+            pitch=round(epitch, 3),\n+            yaw=round(eyaw, 3),",
+        "explanation": "Euler view is rounded to exactly 3 decimals so that quantized v2 quaternion fixtures yield e.g. yaw==87.0 exactly for tests/test_client.py::test_parse_frame_reads_pose_and_noise. Spec never prescribes rounding or millidegree precision; the branch/magic constant is explained only by that test's exact equality check.",
+        "suggested_fix": "Either expose the raw quaternion-derived degrees without rounding and update the test to use pytest.approx, or derive Euler lazily on demand and document that Euler is deprecated, not stored rounded.",
+        "confidence": 0.78
+      },
+      {
+        "severity": "low",
+        "category": "other",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "30",
+        "evidence": "+        # Source-compatible Euler view derived from the quaternion. The wire\n+        # carries ~6-decimal quaternions, so round to millidegrees (well\n+        # within v1's 0.1-degree precision); orientation math always uses the\n+        # quaternion itself, never these angles.",
+        "explanation": "Comment justifies rounding with wire-precision and v1 0.1-degree claims that appear in neither DriftSpec nor CHANGELOG_v2.md. Code comments are the agent's claims, not facts, and must be checked; this justification is unsupported and masks the test-shaped rounding above.",
+        "suggested_fix": "Remove or correct the justification to cite only DriftSpec: orientation is now quaternion-only and Euler is a convenience view; do not claim spec-mandated rounding.",
+        "confidence": 0.85
+      },
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "24",
+        "evidence": "+        health = float(payload[\"health\"])",
+        "explanation": "DriftSpec/CHANGELOG require health 0..1 and finite; code only casts to float with no finite/range check. Out-of-range or NaN/Inf health would be accepted and health alerts (below 0.5) would misbehave.",
+        "suggested_fix": "Validate after float(): check math.isfinite(health) and 0.0 <= health <= 1.0 else raise TelemetryParseError.",
+        "confidence": 0.72
+      },
+      {
+        "severity": "low",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "15",
+        "evidence": "+        qx = float(ori[\"qx\"])\n+        qy = float(ori[\"qy\"])\n+        qz = float(ori[\"qz\"])\n+        qw = float(ori[\"qw\"])",
+        "explanation": "Spec requires unit quaternion with finite components; code normalizes defensively but never checks finite. NaN/Inf components pass through normalize_quaternion and produce NaN rotation matrices/heading.",
+        "suggested_fix": "Check math.isfinite on qx,qy,qz,qw before normalizing and raise TelemetryParseError if not finite; optionally warn if norm deviates far from 1.",
+        "confidence": 0.65
+      },
+      {
+        "severity": "low",
+        "category": "incomplete_migration",
+        "file": "fleet_telemetry/client.py",
+        "line_hint": "14",
+        "evidence": "+    if len(rows) != 6 or any(len(row) != 6 for row in rows):\n+        raise TelemetryParseError(f\"covariance must be 6x6, got {len(rows)}x{[len(r) for r in rows]}\")\n+    if any(not math.isfinite(v) for row in rows for v in row):",
+        "explanation": "Spec says covariance is 6x6 symmetric. Code validates shape/finite but not symmetry or positive-definiteness of position block beyond sigma>0, so non-symmetric payloads are silently accepted.",
+        "suggested_fix": "Optionally validate symmetry within tolerance or at least document that symmetry is not enforced; ensure fuse_positions handles asymmetry defensively.",
+        "confidence": 0.55
+      }
+    ]
+  }
+]

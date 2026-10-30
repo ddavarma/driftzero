@@ -23,15 +23,29 @@ from driftzero import reviewer  # noqa: E402
 TASKS = {
     "20261030-023010-e61999": "DriftZero PR #1",
     "20261030-031042-391b51": "fleet-telemetry-v1 PR #1",
+    "20261030-041743-ffdf04": "fleet-telemetry-v1 PR #2",
 }
 OUT = ROOT / "docs" / "reviewer_eval"
 
 
+def _is_rounding(f: dict) -> bool:
+    return "round(" in f["evidence"]
+
+
+def _is_defaults(f: dict) -> bool:
+    return bool(re.search(r"health:\s*float\s*=\s*1\.0", f["evidence"]) or re.search(r"covariance:[^\n=]*=", f["evidence"]))
+
+
 def detect(findings: list[dict]) -> dict:
-    rounding = any("round(" in f["evidence"] for f in findings)
-    defaults = any(re.search(r"health:\s*float\s*=\s*1\.0", f["evidence"]) or
-                   re.search(r"covariance:[^\n=]*=", f["evidence"]) for f in findings)
-    return {"rounding": rounding, "defaults": bool(defaults)}
+    """caught = reported at any confidence; *_conf = highest confidence among the matching findings (None = v2 log)."""
+    r = [f for f in findings if _is_rounding(f)]
+    d = [f for f in findings if _is_defaults(f)]
+
+    def best(fs):
+        confs = [f.get("confidence") for f in fs if f.get("confidence") is not None]
+        return max(confs) if confs else None
+
+    return {"rounding": bool(r), "defaults": bool(d), "rounding_conf": best(r), "defaults_conf": best(d)}
 
 
 def one(task: str, run: int, effort: str, inputs: dict) -> dict:
@@ -40,7 +54,8 @@ def one(task: str, run: int, effort: str, inputs: dict) -> dict:
                           log_path=OUT / f"{task}.eval.jsonl", task_id=task)
     findings = [f.model_dump() for f in (out.result.findings if out.result else [])]
     return {"task": task, "pr": TASKS[task], "run": run, "effort": effort, "verdict": out.verdict_label,
-            "status": out.status, "categories": sorted(f"{f['severity']}:{f['category']}" for f in findings),
+            "status": out.status, "version": out.version,
+            "categories": sorted(f"{f['severity']}:{f['category']}:{(f.get('confidence') or 1.0):.2f}" for f in findings),
             **detect(findings), "usd": out.cost.usd, "output_tokens": out.cost.output_tokens,
             "latency_s": out.latency_s, "findings": findings}
 
@@ -48,6 +63,10 @@ def one(task: str, run: int, effort: str, inputs: dict) -> dict:
 if __name__ == "__main__":
     runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 3
     effort = sys.argv[sys.argv.index("--effort") + 1] if "--effort" in sys.argv else "high"
+    if "--out" in sys.argv:
+        OUT = ROOT / sys.argv[sys.argv.index("--out") + 1]
+    only = sys.argv[sys.argv.index("--tasks") + 1].split(",") if "--tasks" in sys.argv else list(TASKS)
+    TASKS = {t: TASKS[t] for t in only}
     OUT.mkdir(parents=True, exist_ok=True)
     # Inputs are built once per task, sequentially: loading a run re-runs the guard, which touches the worktree's
     # git index, so it must not run concurrently. Only the model calls run in parallel.
