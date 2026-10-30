@@ -1,4 +1,4 @@
-"""Client library for the fleet telemetry API (v1)."""
+"""Client library for the fleet telemetry API (v2)."""
 from fleet_telemetry.client import FleetClient, TelemetryParseError, parse_batch, parse_frame
 from fleet_telemetry.models import Pose, TelemetryFrame
 

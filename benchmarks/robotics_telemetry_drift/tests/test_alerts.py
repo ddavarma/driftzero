@@ -11,7 +11,7 @@ def test_tilted_robot_raises_tilt_alert(frames):
 
 
 def test_noisy_localisation_raises_noisy_alert(frames):
-    assert kinds(frames["amr-03"]) == {"noisy"}
+    assert kinds(frames["amr-03"]) == {"noisy", "health"}
 
 
 def test_low_battery_and_healthy_robot(frames):
@@ -23,7 +23,7 @@ def test_fleet_summary(frames):
     summary = summarize(list(frames.values()))
     assert summary.n_robots == 4
     assert summary.healthy_ids == ["amr-01"]
-    assert len(summary.alerts) == 3
+    assert len(summary.alerts) == 4
     text = format_summary(summary)
     assert "ALERT [tilt] amr-02" in text
     assert "amr-04  heading  315.0 deg" in text

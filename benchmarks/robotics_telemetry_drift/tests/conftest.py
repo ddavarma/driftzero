@@ -10,7 +10,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 @pytest.fixture
 def fleet_payload():
-    return json.loads((FIXTURES / "fleet_v1.json").read_text())
+    return json.loads((FIXTURES / "fleet_v2.json").read_text())
 
 
 @pytest.fixture
