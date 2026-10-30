@@ -31,6 +31,8 @@ from driftzero.telemetry import Cost
 
 LOG_CHARS = 6000  # per pytest log inside <details>
 DEFAULT_FIX_CONFIDENCE = 0.6  # --review-fix triggers on severity >= medium and confidence >= this
+DEFAULT_FIX_SEVERITY = "medium"
+SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 REVIEW_TABLE_RULES = ("literal_change", "fixture_data")
 FINDING_RULES = ("stale_test_name", "loosened", "modified_test")
 
@@ -210,12 +212,17 @@ def _review_fix_section(res: LoopResult) -> list[str]:
     responses = {r["finding"]: r for r in rf.get("responses") or []}
     hunks: dict[str, list[str]] = rf.get("hunks") or {}
     thr = rf.get("min_confidence")
+    sev = rf.get("min_severity") or DEFAULT_FIX_SEVERITY
     thr_txt = ""
     if thr is not None:
-        thr_txt = (f" Trigger: severity >= medium and confidence >= **{thr}**"
-                   + (f" (lowered from the default {DEFAULT_FIX_CONFIDENCE} by a manual `driftzero review-fix` run, so "
-                      "the fix path could be exercised; the default would not have fired)" if thr < DEFAULT_FIX_CONFIDENCE
-                      else " (the default)") + ".")
+        lowered = []
+        if SEVERITY_RANK[sev] < SEVERITY_RANK[DEFAULT_FIX_SEVERITY]:
+            lowered.append(f"severity from the default {DEFAULT_FIX_SEVERITY} to {sev}")
+        if thr < DEFAULT_FIX_CONFIDENCE:
+            lowered.append(f"confidence from the default {DEFAULT_FIX_CONFIDENCE} to {thr}")
+        thr_txt = (f" Trigger: severity >= **{sev}** and confidence >= **{thr}**"
+                   + (f" (lowered: {'; '.join(lowered)}, by a manual `driftzero review-fix` run so the fix path could "
+                      "be exercised; the defaults would not have fired)" if lowered else " (the defaults)") + ".")
     out = [f"The first review ({REVIEWER_LABEL}, verdict **{rf['first_verdict']}**) raised "
            f"{len(rf['findings'])} finding(s) that met the trigger.{thr_txt} DriftZero ran one extra repair iteration "
            f"(iteration {rf['iteration']}, the hard cap) with the findings verbatim, asking Muse to address each or "
@@ -586,27 +593,29 @@ def fix_hunks(cwd: Path, a: str, b: str) -> dict[str, list[str]]:
     return out
 
 
-def fix_candidates(outcome, min_confidence: float = DEFAULT_FIX_CONFIDENCE) -> list:
-    """Findings that trigger --review-fix: severity medium/high and confidence >= min_confidence."""
+def fix_candidates(outcome, min_confidence: float = DEFAULT_FIX_CONFIDENCE,
+                   min_severity: str = DEFAULT_FIX_SEVERITY) -> list:
+    """Findings that trigger --review-fix: severity >= min_severity, confidence >= min_confidence, not policy-required."""
     if outcome is None or outcome.result is None:
         return []
+    floor = SEVERITY_RANK[min_severity]
     return [f for f in outcome.result.findings
-            if f.severity in ("medium", "high") and f.conf >= min_confidence and not f.policy_required]
+            if SEVERITY_RANK[f.severity] >= floor and f.conf >= min_confidence and not f.policy_required]
 
 
 def apply_review_fix(res: LoopResult, pr_url: str, first, *, provider: str = "baseten", strict: bool = False,
                      changelog: str | None = None, on_line=print,
-                     min_confidence: float = DEFAULT_FIX_CONFIDENCE) -> dict:
+                     min_confidence: float = DEFAULT_FIX_CONFIDENCE, min_severity: str = DEFAULT_FIX_SEVERITY) -> dict:
     """--review-fix: one extra repair iteration on the triggering findings, then guard, verify, push, re-review."""
     from driftzero.loop import review_fix_iteration
 
     wt = res.worktree
-    findings = fix_candidates(first, min_confidence)
+    findings = fix_candidates(first, min_confidence, min_severity)
     prev = _git(wt.path, "rev-parse", "HEAD")
     rec = review_fix_iteration(res, findings, on_line=on_line)
     answer = rec.get("answer")
     info = {"first_verdict": first.verdict_label, "findings": [f.model_dump() for f in findings],
-            "min_confidence": min_confidence,
+            "min_confidence": min_confidence, "min_severity": min_severity,
             "responses": [r.model_dump() for r in (answer.reviewer_responses if answer else [])],
             "iteration": rec["iteration"], "verified": rec["passed"], "reverted": rec["reverted"],
             "guard_ok": rec["guard"]["ok"], "verify": rec["verify"], "prev_commit": prev, "commit": None,

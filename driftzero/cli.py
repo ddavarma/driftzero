@@ -40,6 +40,7 @@ def migrate(
                                          "re-verify, push, and review again."),
     review_fix_min_confidence: float = typer.Option(0.6, help="--review-fix triggers on severity >= medium and "
                                                               "confidence >= this."),
+    review_fix_min_severity: str = typer.Option("medium", help="--review-fix severity floor: low | medium | high."),
 ) -> None:
     """(diff ->) blast radius -> Muse repair -> guard -> sandbox verify (retrying) -> PR -> open-weights review."""
     import shlex
@@ -95,17 +96,19 @@ def migrate(
         if rv.cost.usd:
             res.cost = res.cost + rv.cost
         pr_mod.update_body(res, pr.url, pr_s=pr.pr_s, spec_path=str(spec))
-        actionable = bool(pr_mod.fix_candidates(rv, review_fix_min_confidence))
+        actionable = bool(pr_mod.fix_candidates(rv, review_fix_min_confidence, review_fix_min_severity))
         if review_fix and actionable:
             typer.echo("=== review fix: one extra repair iteration on the reviewer's findings")
             info = pr_mod.apply_review_fix(res, pr.url, rv, provider=reviewer_provider, strict=strict,
-                                           changelog=cl_text, min_confidence=review_fix_min_confidence)
+                                           changelog=cl_text, min_confidence=review_fix_min_confidence,
+                                           min_severity=review_fix_min_severity)
             sr = info.get("second_review")
             typer.echo(f"review fix: {_fix_status(info)}"
                        + (f"; second review: {sr['verdict']}, {sr['findings']} confident finding(s)" if sr else ""))
             pr_mod.update_body(res, pr.url, pr_s=pr.pr_s, spec_path=str(spec))
         elif review_fix:
-            typer.echo(f"review fix: no finding with severity >= medium and confidence >= {review_fix_min_confidence}")
+            typer.echo(f"review fix: no finding with severity >= {review_fix_min_severity} and confidence >= "
+                       f"{review_fix_min_confidence} (policy-required findings excluded)")
     usd = "n/a" if res.cost.usd is None else f"${res.cost.usd:.4f}"
     typer.echo(f"{len(res.iterations)} iteration(s), {usd} total, {time.monotonic() - t_start:.0f}s wall end to end")
 
@@ -122,6 +125,7 @@ def _fix_status(info: dict) -> str:
 def review_fix_cmd(
     task: str = typer.Option(..., help="Task id of a finished, PR-opened run."),
     review_fix_min_confidence: float = typer.Option(0.6, help="Trigger on severity >= medium and confidence >= this."),
+    review_fix_min_severity: str = typer.Option("medium", help="Severity floor: low | medium | high."),
     reviewer_provider: str = typer.Option("baseten", help="baseten | fireworks (for the second review)."),
     strict: bool = typer.Option(False, "--strict"),
 ) -> None:
@@ -137,12 +141,13 @@ def review_fix_cmd(
         raise typer.BadParameter(f"no PR recorded for {task}")
     if res.review is None:
         raise typer.BadParameter(f"no review recorded for {task}")
-    cands = pr_mod.fix_candidates(res.review, review_fix_min_confidence)
-    typer.echo(f"{len(cands)} finding(s) at severity >= medium and confidence >= {review_fix_min_confidence}")
+    cands = pr_mod.fix_candidates(res.review, review_fix_min_confidence, review_fix_min_severity)
+    typer.echo(f"{len(cands)} finding(s) at severity >= {review_fix_min_severity} and confidence >= "
+               f"{review_fix_min_confidence} (policy-required excluded)")
     if not cands:
         raise typer.Exit(0)
     info = pr_mod.apply_review_fix(res, pr_ev["url"], res.review, provider=reviewer_provider, strict=strict,
-                                   min_confidence=review_fix_min_confidence)
+                                   min_confidence=review_fix_min_confidence, min_severity=review_fix_min_severity)
     sr = info.get("second_review")
     typer.echo(f"review fix: {_fix_status(info)}"
                + (f"; second review: {sr['verdict']}, {sr['findings']} confident finding(s)" if sr else ""))

@@ -277,7 +277,8 @@ def test_v21_fix_trigger_threshold(verified, monkeypatch):
     info = pr.apply_review_fix(res, "https://github.com/o/r/pull/9", out, on_line=lambda s: None, min_confidence=0.3)
     assert info["min_confidence"] == 0.3 and [f["confidence"] for f in info["findings"]] == [0.45]
     section = pr.render_body(res).split("## Reviewer-driven fixes")[1].split("## API change")[0]
-    assert "confidence >= **0.3** (lowered from the default 0.6 by a manual `driftzero review-fix` run" in section
+    assert ("Trigger: severity >= **medium** and confidence >= **0.3** (lowered: confidence from the default 0.6 to 0.3, "
+            "by a manual `driftzero review-fix` run") in section
 
 
 def test_policy_required_tag_in_pr_tables(verified):
@@ -290,3 +291,12 @@ def test_policy_required_tag_in_pr_tables(verified):
     assert "| 0.30 | medium | dead_compat_code · policy-required |" in findings
     assert "*policy-required*: a deterministic filter tags findings" in findings
     assert pr.fix_candidates(res.review) == []
+
+
+def test_severity_floor_override():
+    low = FINDING.model_copy(update={"severity": "low", "confidence": 0.4})
+    tagged = FINDING.model_copy(update={"severity": "low", "confidence": 0.4, "policy_required": True})
+    out = _outcome([low, tagged])
+    assert pr.fix_candidates(out, 0.3) == []
+    assert pr.fix_candidates(out, 0.3, "low") == [low]  # policy-required stays excluded
+    assert pr.fix_candidates(out, 0.5, "low") == []
