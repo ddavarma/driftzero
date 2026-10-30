@@ -1,9 +1,13 @@
 """repair -> guard -> verify, retried with the failure fed back (max 3 iterations).
 
 One worktree for the whole loop; each retry runs Muse again in it with the previous
-verification output in the prompt. The loop's own log is `.driftzero/runs/<id>.jsonl`
-(one `iteration` record per pass, plus `start` / `end`); Muse's raw events for pass n
-go to `<id>.muse-i<n>.jsonl`.
+failure in the prompt. The guard runs first: a rejected diff skips the Modal sandbox.
+The loop's own log is `.driftzero/runs/<id>.jsonl` (`start`, one `iteration` record per
+pass with tokens and USD, `end`); Muse's raw events for pass n go to `<id>.muse-i<n>.jsonl`.
+
+Retry feedback: guard rejections verbatim; the agent's own pytest output (first 150 lines);
+hold-out failures redacted to test name + one-line assertion message, never paths, line
+numbers or test bodies.
 
 Smoke test (free: echo provider + local verify):
     python -m driftzero.loop benchmarks/robotics_telemetry_drift benchmarks/robotics_telemetry_drift/driftspec_v2.json --dry-run
@@ -20,30 +24,31 @@ from typing import Callable
 
 from driftzero import repair as repair_mod
 from driftzero import verify as verify_mod
-from driftzero.blast_radius import analyze
+from driftzero.blast_radius import BlastRadius, analyze
+from driftzero.guard import GuardResult, guard_check
 from driftzero.spec import DriftSpec
+from driftzero.telemetry import Cost, cost_from_usage
 
 FAILURE_HEAD_LINES = 150
-
-
-@dataclass
-class GuardResult:
-    ok: bool
-    reasons: list[str] = field(default_factory=list)
-
-
-def guard_check(wt: repair_mod.Worktree, diff: repair_mod.RepairDiff) -> GuardResult:
-    """Placeholder until stage 6 (driftzero/guard.py): always ok."""
-    return GuardResult(ok=True, reasons=["guard not implemented yet (stage 6)"])
 
 
 @dataclass
 class LoopResult:
     task_id: str
     worktree: repair_mod.Worktree
+    spec: DriftSpec
+    blast_radius: BlastRadius
     passed: bool
     iterations: list[dict]
     log_path: Path
+    cost: Cost
+    wall_time_s: float
+    model: str
+    steps: int
+    answer: repair_mod.RepairAnswer | None = None
+    guard: GuardResult | None = None
+    verify: verify_mod.VerifyResult | None = None
+    hidden_holdout_files: list[str] = field(default_factory=list)
 
 
 def _head(text: str, n: int = FAILURE_HEAD_LINES) -> str:
@@ -51,17 +56,27 @@ def _head(text: str, n: int = FAILURE_HEAD_LINES) -> str:
     return "\n".join(lines[:n]) + (f"\n... ({len(lines) - n} more lines)" if len(lines) > n else "")
 
 
-def build_prior_failure(result: verify_mod.VerifyResult, guard: GuardResult | None = None) -> str:
-    """Failure context for the next repair pass: first 150 lines of each pytest run."""
-    parts = []
-    if guard and not guard.ok:
-        parts += ["### Guard rejected the diff", *guard.reasons, ""]
-    for s in (result.holdout, result.agent):
-        label = "hold-out contract tests (not in your worktree)" if s.name == "holdout" else "your test suite"
-        parts += [f"### {label}: exit {s.exit_code}, {s.passed_count}/{s.tests} passed", _head(s.stdout + s.stderr), ""]
+def build_prior_failure(result: verify_mod.VerifyResult) -> str:
+    """Failure context for the next repair pass after a failed verification."""
+    parts: list[str] = []
+    h, a = result.holdout, result.agent
+    if h.exit_code != 0:
+        parts.append(f"### Hidden contract tests: {h.passed_count}/{h.tests} passed")
+        parts.append("These check the v2 contract and are not in your worktree. Failing tests (name: message):")
+        failures = h.failures_redacted()
+        parts += [f"- {name}: {msg}" for name, msg in failures] or [f"- the suite failed to run (exit {h.exit_code})"]
+        parts.append("")
+    if a.exit_code != 0:
+        parts += [f"### Your test suite: exit {a.exit_code}, {a.passed_count}/{a.tests} passed",
+                  _head(a.stdout + a.stderr), ""]
     if result.setup.get("exit_code"):
-        parts += ["### pip install -e failed", result.setup.get("output", ""), ""]
+        parts += ["### `pip install -e .` failed", result.setup.get("output", ""), ""]
     return "\n".join(parts)
+
+
+def find_holdout(repo: Path) -> Path | None:
+    found = sorted(p for p in repo.glob("holdout_*") if p.is_dir())
+    return found[0] if found else None
 
 
 def repair_until_verified(
@@ -73,10 +88,12 @@ def repair_until_verified(
     local: bool = False,
     dry_run: bool = False,
     contributor: bool = False,
+    model: str = repair_mod.DEFAULT_MODEL,
     max_steps: int = repair_mod.DEFAULT_MAX_STEPS,
     effort: str = repair_mod.DEFAULT_EFFORT,
     on_line: Callable[[str], None] = lambda s: print(s, flush=True),
 ) -> LoopResult:
+    t0 = time.monotonic()
     spec = spec if isinstance(spec, DriftSpec) else DriftSpec.load(spec)
     repo = Path(repo).resolve()
     br = analyze(repo, spec)
@@ -86,10 +103,7 @@ def repair_until_verified(
     runs.mkdir(parents=True, exist_ok=True)
     log_path = runs / f"{task_id}.jsonl"
 
-    holdout = Path(holdout_dir).resolve() if holdout_dir else None
-    if holdout is None:
-        found = sorted(p for p in repo.glob("holdout_*") if p.is_dir())
-        holdout = found[0] if found else None
+    holdout = Path(holdout_dir).resolve() if holdout_dir else find_holdout(repo)
     hidden = repair_mod.hide_in_worktree(wt, [os.path.relpath(holdout, wt.root)]) if holdout else []
 
     def log(event: str, **data) -> None:
@@ -97,25 +111,42 @@ def repair_until_verified(
             fh.write(json.dumps({"ts": time.time(), "event": event, "task_id": task_id, **data}, default=str) + "\n")
 
     log("start", repo=str(repo), branch=wt.branch, base=wt.base, worktree=str(wt.path), dry_run=dry_run,
-        local=local, max_iterations=max_iterations, holdout=str(holdout) if holdout else None,
-        hidden_from_agent=len(hidden), impacted_symbols=len(br.symbols), impacted_tests=len(br.tests))
-    on_line(f"task {task_id}: worktree {wt.path} ({len(hidden)} hold-out files hidden from the agent)")
+        local=local, model=model, contributor=contributor, max_iterations=max_iterations,
+        holdout=str(holdout) if holdout else None, hidden_from_agent=len(hidden),
+        impacted_symbols=len(br.symbols), impacted_tests=len(br.tests))
+    on_line(f"task {task_id}: {len(br.symbols)} impacted symbols in {len(br.files)} files, {len(br.tests)} tests")
+    on_line(f"worktree {wt.path} (branch {wt.branch}); {len(hidden)} hold-out file(s) hidden from the agent")
 
     iterations: list[dict] = []
     prior_failure: str | None = None
     passed = False
+    total = Cost()
+    steps = 0
+    answer = guard = vres = None
     for n in range(1, max_iterations + 1):
-        on_line(f"=== iteration {n}/{max_iterations}")
+        it_start = time.monotonic()
+        on_line(f"=== iteration {n}/{max_iterations}: repair")
         prompt = repair_mod.write_repair_prompt(spec, br, prior_failure, project_rel=wt.project_rel,
                                                 out_path=runs / f"{task_id}.prompt-i{n}.md")
         run = repair_mod.run_muse(wt, prompt, contributor=contributor, run_id=f"{task_id}.muse-i{n}",
-                                  dry_run=dry_run, max_steps=max_steps, effort=effort, on_line=on_line)
+                                  dry_run=dry_run, model=model, max_steps=max_steps, effort=effort, on_line=on_line)
+        cost = cost_from_usage(run.usage, default_model=model, contributor=contributor, free=dry_run)
+        total = total + cost
+        steps += run.steps
+        answer = run.answer or answer
         diff = repair_mod.collect_diff(wt)
         (runs / f"{task_id}.i{n}.diff").write_text(diff.patch)
+
+        on_line(f"=== iteration {n}/{max_iterations}: guard")
         guard = guard_check(wt, diff)
+        on_line(f"guard {'ok' if guard.ok else 'REJECTED'}: {len(guard.rejections)} rejection(s), "
+                f"{len(guard.review_items)} item(s) for review")
+        for f in guard.rejections:
+            on_line(f"  reject {f}")
 
         vres = None
         if guard.ok and holdout is not None:
+            on_line(f"=== iteration {n}/{max_iterations}: verify ({'local' if local else 'modal'})")
             vres = verify_mod.verify(wt.path, holdout, local=local, on_line=on_line)
             verify_mod.save_result(vres, runs, f"{task_id}.i{n}")
             on_line(vres.summary())
@@ -126,32 +157,38 @@ def repair_until_verified(
             "repair": {"terminal": run.terminal, "exit_code": run.exit_code, "steps": run.steps,
                        "tool_calls": len(run.commands), "duration_s": run.duration_s,
                        "answer": run.answer.model_dump() if run.answer else None},
-            "cost": {**run.tokens, "provider": "meta" if not dry_run else "echo",
-                     "model": None if dry_run else repair_mod.DEFAULT_MODEL,
-                     "usd": None},  # Meta per-token prices not configured yet
+            "cost": {**cost.as_dict(), "provider": "echo" if dry_run else "meta", "model": None if dry_run else model,
+                     "contributor": contributor},
             "diff": {"files": len(diff.files), "added": diff.added, "deleted": diff.deleted},
-            "guard": {"ok": guard.ok, "reasons": guard.reasons},
+            "guard": guard.as_dict(),
             "verify": None if vres is None else {
-                "passed": vres.passed, "backend": vres.backend, "wall_time_s": vres.wall_time_s,
-                "agent": {"exit_code": vres.agent.exit_code, "tests": vres.agent.tests, "passed": vres.agent.passed_count,
-                          "failed": vres.agent.failed_ids()},
+                "passed": vres.passed, "backend": vres.backend, "sandbox_id": vres.sandbox_id,
+                "wall_time_s": vres.wall_time_s,
+                "agent": {"exit_code": vres.agent.exit_code, "tests": vres.agent.tests,
+                          "passed": vres.agent.passed_count, "failed": vres.agent.failed_ids()},
                 "holdout": {"exit_code": vres.holdout.exit_code, "tests": vres.holdout.tests,
                             "passed": vres.holdout.passed_count, "failed": vres.holdout.failed_ids()}},
+            "wall_time_s": round(time.monotonic() - it_start, 1),
             "passed": passed,
         }
         iterations.append(record)
         log("iteration", **record)
+        on_line(f"iteration {n}: {'PASSED' if passed else 'failed'}; ${cost.usd or 0:.4f} "
+                f"({cost.input_tokens} in, {cost.cached_pct:.0f}% cached, {cost.output_tokens} out)")
         if passed:
             break
-        if vres is not None:
-            prior_failure = build_prior_failure(vres, guard)
-        elif not guard.ok:
-            prior_failure = "### Guard rejected the diff\n" + "\n".join(guard.reasons)
+        if not guard.ok:
+            prior_failure = guard.retry_message()
+        elif vres is not None:
+            prior_failure = build_prior_failure(vres)
 
-    totals = {k: sum(it["cost"][k] for it in iterations) for k in ("input_tokens", "cached_tokens", "output_tokens")}
-    log("end", passed=passed, iterations=len(iterations), tokens=totals)
-    on_line(f"{'VERIFIED' if passed else 'NOT VERIFIED'} after {len(iterations)} iteration(s); log {log_path}")
-    return LoopResult(task_id=task_id, worktree=wt, passed=passed, iterations=iterations, log_path=log_path)
+    wall = round(time.monotonic() - t0, 1)
+    log("end", passed=passed, iterations=len(iterations), cost=total.as_dict(), wall_time_s=wall)
+    on_line(f"{'VERIFIED' if passed else 'NOT VERIFIED'} after {len(iterations)} iteration(s), "
+            f"${total.usd or 0:.4f}, {wall:.0f}s; log {log_path}")
+    return LoopResult(task_id=task_id, worktree=wt, spec=spec, blast_radius=br, passed=passed, iterations=iterations,
+                      log_path=log_path, cost=total, wall_time_s=wall, model=model, steps=steps, answer=answer,
+                      guard=guard, verify=vres, hidden_holdout_files=hidden)
 
 
 if __name__ == "__main__":

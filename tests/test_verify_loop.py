@@ -83,16 +83,34 @@ def test_hide_in_worktree_hides_holdouts_without_a_diff(wt):
     assert verify.resolve_holdout(wt.path)[0] == wt.root / BENCH_REL / "holdout_v2"
 
 
-def test_prior_failure_is_head_limited():
-    out = "\n".join(f"line {i}" for i in range(400))
-    suite = verify.SuiteResult(name="holdout", command=[], exit_code=1, stdout=out, stderr="", junit_xml=None, tests=7,
-                               failures=5)
-    agent = suite.model_copy(update={"name": "agent", "exit_code": 0, "failures": 0, "stdout": "ok"})
-    res = verify.VerifyResult(passed=False, backend="local", project_rel=".", agent=agent, holdout=suite,
+JUNIT = """<?xml version="1.0"?><testsuites><testsuite name="pytest" tests="3" failures="2" errors="0" skipped="0">
+<testcase classname="holdout_v2.test_contract_v2" name="test_health_alert_only_below_threshold" time="0.01">
+<failure message="AssertionError: amr-03&#10;assert 'health' in {'noisy'}">def test_health_alert_only_below_threshold():
+    healths = {rid: raw["health"] for rid, raw in BY_ID.items()}
+/tmp/x/holdout_v2/test_contract_v2.py:71: AssertionError</failure></testcase>
+<testcase classname="holdout_v2.test_contract_v2" name="test_client_requests_v2_paths" time="0.01">
+<failure message="fleet_telemetry.client.TelemetryParseError: missing field 'qw' at /tmp/x/holdout_v2/test_contract_v2.py:44">tb</failure></testcase>
+<testcase classname="holdout_v2.test_contract_v2" name="test_ok" time="0.01"/>
+</testsuite></testsuites>"""
+
+
+def test_prior_failure_redacts_holdouts_and_head_limits_agent_output():
+    agent_out = "\n".join(f"line {i}" for i in range(400))
+    agent = verify.SuiteResult(name="agent", command=[], exit_code=1, stdout=agent_out, stderr="", junit_xml=None,
+                               tests=21, failures=1)
+    holdout = verify.SuiteResult(name="holdout", command=[], exit_code=1, stdout="FULL HOLDOUT OUTPUT", stderr="",
+                                 junit_xml=JUNIT, tests=3, failures=2)
+    res = verify.VerifyResult(passed=False, backend="local", project_rel=".", agent=agent, holdout=holdout,
                               setup={"exit_code": 0}, wall_time_s=0)
     text = loop.build_prior_failure(res)
     assert "line 149" in text and "line 150" not in text and "(250 more lines)" in text
-    assert "hold-out contract tests (not in your worktree): exit 1, 2/7 passed" in text
+    assert "Hidden contract tests: 1/3 passed" in text
+    assert "- test_health_alert_only_below_threshold: AssertionError: amr-03" in text
+    assert "- test_client_requests_v2_paths: fleet_telemetry.client.TelemetryParseError: missing field 'qw' at <path>" \
+        in text
+    for leaked in ("holdout_v2", "test_contract_v2", ".py", ":71", "def test_", "healths =", "FULL HOLDOUT OUTPUT",
+                   "assert 'health' in"):
+        assert leaked not in text, leaked
 
 
 @needs_muse
@@ -105,13 +123,14 @@ def test_loop_dry_run_logs_every_iteration(repo):
         assert [e["event"] for e in events] == ["start", "iteration", "iteration", "end"]
         assert events[0]["hidden_from_agent"] == 1
         it = events[1]
-        assert it["guard"]["ok"] and it["cost"]["provider"] == "echo" and "input_tokens" in it["cost"]
+        assert it["guard"]["ok"] and it["cost"]["provider"] == "echo" and it["cost"]["usd"] == 0.0
         assert it["verify"]["holdout"] == {"exit_code": 1, "tests": 7, "passed": 2,
                                            "failed": it["verify"]["holdout"]["failed"]}
         runs = res.log_path.parent
         assert "Previous attempt failed verification" not in (runs / f"{res.task_id}.prompt-i1.md").read_text()
         retry = (runs / f"{res.task_id}.prompt-i2.md").read_text()
-        assert "Previous attempt failed verification" in retry and "test_client_requests_v2_paths" in retry
+        assert "Previous attempt failed verification" in retry and "- test_client_requests_v2_paths: " in retry
+        assert "holdout_v2" not in retry and "test_contract_v2" not in retry and "def test_" not in retry
         assert (runs / f"{res.task_id}.muse-i2.jsonl").exists()
     finally:
         repair.remove_worktree(res.worktree)

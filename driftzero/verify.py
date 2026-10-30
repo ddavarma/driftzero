@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,8 @@ PY_VERSION = "3.11"
 SANDBOX_TIMEOUT_S = 15 * 60
 CMD_TIMEOUT_S = 10 * 60
 REMOTE_ROOT = "/work"
+_PATH_RE = re.compile(r"(?:[A-Za-z]:)?(?:[\w.\-]*/)+[\w.\-]+(?:\.py)?(?::\d+)?|[\w\-]+\.py(?::\d+)?")
+_LINE_RE = re.compile(r",? ?\bline \d+\b")
 TAR_EXCLUDE = {"__pycache__", ".pytest_cache", ".venv", "node_modules", ".mypy_cache"}
 
 
@@ -47,6 +50,24 @@ class SuiteResult(BaseModel):
     @property
     def passed_count(self) -> int:
         return self.tests - self.failures - self.errors - self.skipped
+
+    def failures_redacted(self) -> list[tuple[str, str]]:
+        """(test name, one-line message) per failing test: no paths, line numbers, module names or bodies."""
+        if not self.junit_xml:
+            return []
+        out = []
+        for case in ET.fromstring(self.junit_xml).iter("testcase"):
+            node = case.find("failure")
+            if node is None:
+                node = case.find("error")
+            if node is None:
+                continue
+            msg = (node.get("message") or node.tag).strip().splitlines()[0] if (node.get("message") or "").strip() \
+                else node.tag
+            msg = _PATH_RE.sub("<path>", msg)
+            msg = _LINE_RE.sub("", msg)
+            out.append((case.get("name") or "?", msg[:200]))
+        return out
 
     def failed_ids(self) -> list[str]:
         if not self.junit_xml:
