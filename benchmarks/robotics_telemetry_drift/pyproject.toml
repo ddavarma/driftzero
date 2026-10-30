@@ -17,3 +17,4 @@ packages = ["fleet_telemetry"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # import this checkout, not an editable install elsewhere (matters in worktrees)
