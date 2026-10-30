@@ -197,3 +197,12 @@ def test_v22_policy_section_and_no_rounding_in_policy():
     assert "Do not report code that\npolicy requires" in reviewer.SYSTEM or "policy requires" in reviewer.SYSTEM
     assert not re.search(r"\bround", " ".join(policy).lower())  # 'around' is fine; 'round'/'rounding' is not
     assert "round" not in reviewer.SYSTEM.lower()
+
+
+def test_v23_policy_scope_sentence_and_frozen_version():
+    flat = " ".join(reviewer.SYSTEM.split())
+    assert ("This policy governs which interfaces exist, not how values are computed; numeric fidelity to the "
+            "DriftSpec and changelog formulas is always in scope.") in flat
+    assert "round" not in reviewer.SYSTEM.lower()
+    assert reviewer.ReviewOutcome(result=None, provider="baseten", model="m", effort="high", cost=reviewer.Cost(),
+                                  latency_s=0, attempts=0).version == "2.3"

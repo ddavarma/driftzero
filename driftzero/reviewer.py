@@ -109,7 +109,8 @@ justification that neither document supports, that unsupported justification is 
 
 You also get the AGREED MIGRATION POLICY: the hard rules the repair agent was given. Do not report code that this
 policy requires (for example a source-compatible Python API kept on purpose). Do report code that violates the policy,
-and problems the policy does not cover.
+and problems the policy does not cover. This policy governs which interfaces exist, not how values are computed;
+numeric fidelity to the DriftSpec and changelog formulas is always in scope.
 
 You also get the unchanged tests that exercise the modified library functions. They are not part of the diff, but
 they show which expectations the new library code has to meet; use them to judge whether library code is shaped by
@@ -157,7 +158,7 @@ class ReviewOutcome:
     finish_reasons: list[str] = field(default_factory=list)
     test_context: list[str] = field(default_factory=list)  # names of the unchanged tests included
     policy_given: bool = False
-    version: str = "2.2"
+    version: str = "2.3"  # frozen after the v2.3 eval (docs/reviewer_eval.md)
 
     @property
     def confident(self) -> list[Finding]:
