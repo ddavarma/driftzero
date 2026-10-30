@@ -45,6 +45,28 @@ def migrate(
     typer.echo(f"{len(res.iterations)} iteration(s), {usd}, {res.wall_time_s:.0f}s end to end")
 
 
+@app.command("diff")
+def diff_cmd(
+    changelog: Path = typer.Option(None, exists=True, dir_okay=False, help="Provider changelog (markdown)."),
+    openapi_v1: Path = typer.Option(None, "--openapi-v1", exists=True, dir_okay=False, help="OpenAPI document, old."),
+    openapi_v2: Path = typer.Option(None, "--openapi-v2", exists=True, dir_okay=False, help="OpenAPI document, new."),
+    out: Path = typer.Option(..., help="Where to write the DriftSpec JSON."),
+    compare: Path = typer.Option(None, exists=True, dir_okay=False, help="A reference DriftSpec to compare against."),
+) -> None:
+    """Changelog / OpenAPI v1 -> v2 into a DriftSpec (deterministic diff + one muse-spark-1.3 merge call)."""
+    from driftzero import differ
+
+    res = differ.diff(changelog, openapi_v1, openapi_v2)
+    res.spec.dump(out)
+    n = sum(len(getattr(res.spec, c)) for c in differ.CATEGORIES)
+    typer.echo(f"{out}: {n} changes ({len(res.candidates)} OpenAPI diff candidates, {len(res.model_added)} added from "
+               f"the changelog, {len(res.restored)} restored after the model dropped them)")
+    typer.echo(f"differ: {res.cost.input_tokens} in / {res.cost.output_tokens} out tokens, "
+               f"${res.cost.usd or 0:.4f}, {res.latency_s:.1f}s")
+    if compare:
+        typer.echo(differ.format_comparison(differ.compare(res.spec, DriftSpec.load(compare))))
+
+
 @app.command("pr-body")
 def pr_body(
     task: str = typer.Option(..., help="Task id of a finished run (.driftzero/runs/<id>.jsonl)."),

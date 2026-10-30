@@ -56,6 +56,13 @@ class LLMResult:
     latency_s: float
     response_id: str | None = None
     status: str | None = None
+    cached_tokens: int = 0
+
+    @property
+    def usd(self) -> float | None:
+        from driftzero.telemetry import usd
+
+        return usd(self.model, self.input_tokens, self.cached_tokens, self.output_tokens)
 
 
 @lru_cache(maxsize=None)
@@ -78,12 +85,18 @@ def respond(
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     log_path: Path | None = None,
     client: OpenAI | None = None,
+    text_format: dict | None = None,
 ) -> LLMResult:
-    """One Meta Model API call via the Responses API; returns `output_text` plus usage."""
+    """One Meta Model API call via the Responses API; returns `output_text` plus usage.
+
+    `text_format` is passed as `text={"format": ...}`, e.g. a `json_schema` structured-output block.
+    """
     client = client or get_client("meta")
     kwargs = {"model": model, "input": prompt, "max_output_tokens": max_output_tokens}
     if instructions:
         kwargs["instructions"] = instructions
+    if text_format:
+        kwargs["text"] = {"format": text_format}
 
     start = time.perf_counter()
     resp = client.responses.create(**kwargs)
@@ -91,6 +104,7 @@ def respond(
 
     usage = resp.usage
     details = getattr(usage, "output_tokens_details", None) if usage else None
+    in_details = getattr(usage, "input_tokens_details", None) if usage else None
     result = LLMResult(
         text=resp.output_text or "",
         provider="meta",
@@ -98,6 +112,7 @@ def respond(
         input_tokens=getattr(usage, "input_tokens", 0) or 0,
         output_tokens=getattr(usage, "output_tokens", 0) or 0,
         reasoning_tokens=getattr(details, "reasoning_tokens", 0) or 0,
+        cached_tokens=getattr(in_details, "cached_tokens", 0) or 0,
         latency_s=round(latency, 3),
         response_id=getattr(resp, "id", None),
         status=getattr(resp, "status", None),
@@ -115,7 +130,7 @@ def respond(
 def log_call(log_path: Path, result: LLMResult) -> None:
     """Append one call record (no prompt/response text) to a run's JSONL log."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    record = {"ts": time.time(), "event": "llm_call", **asdict(result)}
+    record = {"ts": time.time(), "event": "llm_call", **asdict(result), "usd": result.usd}
     record.pop("text")
     with log_path.open("a") as fh:
         fh.write(json.dumps(record) + "\n")
