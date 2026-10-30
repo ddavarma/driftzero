@@ -1,0 +1,40 @@
+$ python -m pytest -q -p no:cacheprovider --junitxml=/tmp/agent.xml tests/
+# exit 2
+
+==================================== ERRORS ====================================
+____________________ ERROR collecting tests/test_chatbot.py ____________________
+ImportError while importing test module '/work/wt/tests/test_chatbot.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/local/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_chatbot.py:5: in <module>
+    from src.JobTracker.chatbot import ChatBot, ChatGPT
+src/JobTracker/chatbot.py:5: in <module>
+    from openai import OpenAI, OpenAIError
+E   ModuleNotFoundError: No module named 'openai'
+=============================== warnings summary ===============================
+src/JobTracker/chatbot.py:36
+  /work/wt/src/JobTracker/chatbot.py:36: DeprecationWarning: invalid escape sequence '\{'
+    return ('Rate my email as an application email on a scale of 1 to 100. return a a json \{"score": int\}  Here is the mail body: ' + info )
+
+src/JobTracker/chatbot.py:39
+  /work/wt/src/JobTracker/chatbot.py:39: DeprecationWarning: invalid escape sequence '\{'
+    return ('what is the company I appied? return a json \{"Company": string\} Here is the mail body: ' + info)
+
+src/JobTracker/chatbot.py:42
+  /work/wt/src/JobTracker/chatbot.py:42: DeprecationWarning: invalid escape sequence '\{'
+    return ('what is the state of this application? return a json \{"State": string\} Here is the mail body: ' + info)
+
+src/JobTracker/chatbot.py:45
+  /work/wt/src/JobTracker/chatbot.py:45: DeprecationWarning: invalid escape sequence '\{'
+    return ('what should be next step in the application process as an applicant? return a json \{"NextStep": string\} Here is the mail body: ' + info)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR tests/test_chatbot.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+4 warnings, 1 error in 0.11s
+
+--- stderr ---

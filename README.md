@@ -130,6 +130,41 @@ the right entries ([`docs/diff/driftspec_v2.generated.json`](docs/diff/driftspec
 Logs: [`docs/runs/`](docs/runs/). The end-to-end explanation, with every number checked against these logs, is in
 [`docs/PRODUCT.md`](docs/PRODUCT.md). Muse's event vocabulary: [`docs/muse_events.md`](docs/muse_events.md).
 
+## External test: JobTracker (OpenAI SDK v0→v1)
+
+The first run on a repository we did not write. Target: [resumejob/JobTracker](https://github.com/resumejob/JobTracker)
+(MIT, 607 Python lines, 5 pytest tests that mock the v0 API and pass offline with `openai==0.28.1`), forked to
+[ddavarma/JobTracker-driftzero-test](https://github.com/ddavarma/JobTracker-driftzero-test). Drift input: the official
+v1.0.0 migration guide, quoted verbatim in
+[`benchmarks/jobtracker_openai_v1/CHANGELOG_openai_v1.md`](benchmarks/jobtracker_openai_v1/CHANGELOG_openai_v1.md); no
+OpenAPI documents exist. 7 hold-outs (respx-mocked v1 HTTP calls) failed 7/7 on the v0 code and passed 7/7 on a
+hand-written migration against `openai` 1.109.1.
+
+**Run `20261030-165401-ebb8d2`: not verified, no PR.** 3 iterations, $1.15, 413 s. What happened, in order:
+
+- **Differ** ($0.049): with no OpenAPI to diff, all 60 DriftSpec entries came from the model, forced into "fields" of
+  a schema named `openai` (`ChatCompletion.create` → `chat.completions.create` as a rename). It repeated the guide's
+  claim that `openai.OpenAIError` was removed, which is false for the real v1 SDK.
+- **Blast radius**: 3 symbols in 1 file, **0 tests**. It matched bare attribute names (`create`, `list`), and missed
+  the tests (they reach the code through `unittest` `setUp`), the `@patch('openai.Model.list')` strings and the
+  dict-style response access.
+- **Repair**: Muse migrated the code to the v1 client with attribute access in iteration 1. The guard passed every
+  iteration (0 rejections, 4 restructured tests reported).
+- **Verify, iteration 1**: the repo has no `pyproject.toml`/`setup.py`, so `pip install -e` failed and `openai` was
+  never installed in the sandbox; both suites failed at import.
+- **Muse's response**: given the agent-suite traceback (`No module named 'openai'`), it added a `pyproject.toml`
+  (`openai>=1.0.0`) **and wrapped the import in `try: from openai import OpenAI, OpenAIError, BadRequestError`
+  `except ImportError:` with stub `OpenAI`/`OpenAIError`/`BadRequestError` classes**, so the library imports without
+  the SDK installed. That is library code shaped around a broken test environment, and the guard, which only inspects
+  tests, did not see it.
+- **Verify, iterations 2–3**: the agent's 5 tests passed, but the hold-outs never ran: `ModuleNotFoundError: No module
+  named 'httpx'`. Reproduced outside DriftZero ([`docs/runs/20261030-165401-ebb8d2.diag_sandbox.py`](docs/runs/)):
+  `openai>=1.0.0` resolved to **openai 3.41.0**, which uses `httpx2`, and verify never installed the hold-outs'
+  dependencies (`respx`). Both were gaps: DriftZero's, and the hold-outs', which had only been validated against 1.x.
+- **Retry feedback**: the redacted hold-out failure was just "collection failure", which Muse could not act on.
+
+Logs: [`docs/runs/20261030-165401-ebb8d2.*`](docs/runs/).
+
 ## Limitations
 
 - **The open-weights reviewer needed the right inputs to catch the rounding.** Same model (Muse Spark Open on

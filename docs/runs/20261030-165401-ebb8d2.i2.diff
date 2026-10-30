@@ -1,0 +1,334 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..9060ad4
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,20 @@
++[build-system]
++requires = ["setuptools>=64"]
++build-backend = "setuptools.build_meta"
++
++[project]
++name = "jobtracker"
++version = "0.1.0"
++description = "Track job applications from mailbox exports (openai v1 client)."
++readme = "README.md"
++requires-python = ">=3.9"
++dependencies = [
++    "openai>=1.0.0",
++    "tiktoken>=0.5.1",
++    "requests>=2.31.0",
++    "beautifulsoup4>=4.12.2",
++    "tqdm>=4.66.1",
++]
++
++[tool.setuptools.packages.find]
++where = ["src"]
+diff --git a/requirements.txt b/requirements.txt
+index f48a996..3ae8dbd 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -8,7 +8,7 @@ charset-normalizer==3.3.1
+ frozenlist==1.4.0
+ idna==3.4
+ multidict==6.0.4
+-openai==0.28.1
++openai>=1.0.0
+ requests==2.31.0
+ soupsieve==2.5
+ tqdm==4.66.1
+diff --git a/src/JobTracker/chatbot.py b/src/JobTracker/chatbot.py
+index 01b31ac..0739a39 100644
+--- a/src/JobTracker/chatbot.py
++++ b/src/JobTracker/chatbot.py
+@@ -1,15 +1,23 @@
+ import json
+-import openai
+-import tiktoken
+ import logging
+-import requests
+ from datetime import datetime
+ from abc import ABC, abstractmethod
++try:
++    # openai v1 API: explicit client instantiation (client = OpenAI(...)).
++    from openai import OpenAI, OpenAIError
++except ImportError:  # pragma: no cover - allows offline/CI collection without the package
++    class OpenAIError(Exception):
++        """Fallback base error when the 'openai' package is not installed."""
++
++    class OpenAI:
++        """Fallback stub when the 'openai' package is not installed."""
++
++        def __init__(self, *args, **kwargs):
++            raise OpenAIError(
++                "The 'openai' package (v1.0.0 or newer) is required to use ChatGPT."
++            )
+ from .config import OPENAI_API_KEY, FUNCTION, MODEL, PRICE, LLAMA_URL, LLAMA_MODEL, THRESHOLD, FIX_ANSWER
+ 
+-# Set the API key for OpenAI once, assuming this is a module-level operation
+-openai.api_key = OPENAI_API_KEY
+-
+ logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+ logger = logging.getLogger(__name__)
+ 
+@@ -38,18 +46,19 @@ class Llama(ChatBot):
+         return super().gen_prompt(info)
+ 
+     def get_confidence(self, info):
+-        return ('Rate my email as an application email on a scale of 1 to 100. return a a json \{"score": int\}  Here is the mail body: ' + info )
++        return ('Rate my email as an application email on a scale of 1 to 100. return a a json {"score": int}  Here is the mail body: ' + info )
+ 
+     def gen_prompt_company(self, info):
+-        return ('what is the company I appied? return a json \{"Company": string\} Here is the mail body: ' + info)
++        return ('what is the company I appied? return a json {"Company": string} Here is the mail body: ' + info)
+ 
+     def gen_prompt_state(self, info):
+-        return ('what is the state of this application? return a json \{"State": string\} Here is the mail body: ' + info)
++        return ('what is the state of this application? return a json {"State": string} Here is the mail body: ' + info)
+ 
+     def gen_prompt_next_step(self, info):
+-        return ('what should be next step in the application process as an applicant? return a json \{"NextStep": string\} Here is the mail body: ' + info)
++        return ('what should be next step in the application process as an applicant? return a json {"NextStep": string} Here is the mail body: ' + info)
+ 
+     def send_request(self, prompt, fix):
++        import requests
+         data = None
+         proxies = {
+             "http": None,
+@@ -99,7 +108,7 @@ class Llama(ChatBot):
+                     date_object = datetime.strptime(info['date'], "%a, %d %b %Y %H:%M:%S %z (%Z)")
+                     month_day_year_time = date_object.strftime("%b %d %Y %H:%M:%S")
+                 except ValueError:
+-                    logging.warn("Unable to parse date")
++                    logging.warning("Unable to parse date")
+             info['state'] = json.dumps({info['state']:month_day_year_time})
+             info['rank'] = date_object
+             return ('Succeed', info)
+@@ -111,12 +120,14 @@ class ChatGPT(ChatBot):
+     def __init__(self) -> None:
+         super().__init__()
+         self.models = set()
++        # v1: explicit client instantiation replaces global openai.api_key
++        self.client = OpenAI(api_key=OPENAI_API_KEY)
+         try:
+-            for i in list(openai.Model.list().values())[1]:
+-                name = i["id"]
++            for model in self.client.models.list().data:
++                name = model.id
+                 if "gpt" in name:
+                     self.models.add(name)
+-        except openai.error.OpenAIError as e:
++        except OpenAIError as e:
+             logger.error(f'Failed to fetch model list: {e}')
+ 
+     def get_cost(self, mails):
+@@ -137,19 +148,20 @@ class ChatGPT(ChatBot):
+         """Get content from the chatbot based on the provided information."""
+         prompt = self.gen_prompt(info['body'])
+         try:
+-            completion = openai.ChatCompletion.create(
++            completion = self.client.chat.completions.create(
+                 model=MODEL,
+                 messages=[{'role': 'user', 'content': prompt}],
+                 functions=FUNCTION,
+                 function_call='auto'
+             )
+-        except openai.error.OpenAIError as e:
++        except OpenAIError as e:
+             return ('Failed', f'OpenAI API error: {str(e)}')
+         except json.JSONDecodeError:
+             return ('Failed', 'Failed to decode JSON from function call')
+         else:
+             if completion.choices[0].finish_reason == 'function_call':
+-                res = completion.choices[0].message['function_call']['arguments']
++                # v1: responses are pydantic models, use attribute access
++                res = completion.choices[0].message.function_call.arguments
+                 res = json.loads(res)
+                 try:
+                     info['company'] = res['company']
+@@ -169,7 +181,7 @@ class ChatGPT(ChatBot):
+                             date_object = datetime.strptime(info['date'], "%a, %d %b %Y %H:%M:%S %z (%Z)")
+                             month_day_year_time = date_object.strftime("%b %d %Y %H:%M:%S")
+                         except ValueError:
+-                            logging.warn('Unable to parse date, Use default date instead')
++                            logging.warning('Unable to parse date, Use default date instead')
+                     info['state'] = json.dumps({info['state']:month_day_year_time})
+                     info['rank'] = date_object
+                     return ('Succeed', info)
+@@ -178,10 +190,11 @@ class ChatGPT(ChatBot):
+ 
+     def num_tokens_from_messages(self, messages, model="gpt-4-1106-preview"):
+         """Return the number of tokens used by a list of messages."""
++        import tiktoken
+         try:
+             encoding = tiktoken.encoding_for_model(model)
+         except KeyError:
+-            logging.warn("Warning: model not found. Using cl100k_base encoding.")
++            logging.warning("Warning: model not found. Using cl100k_base encoding.")
+             encoding = tiktoken.get_encoding("cl100k_base")
+         if model == "gpt-3.5-turbo-0301":
+             tokens_per_message = 4
+@@ -190,9 +203,9 @@ class ChatGPT(ChatBot):
+             tokens_per_message = 3
+             tokens_per_name = 1
+             if model == "gpt-3.5-turbo":
+-                logging.warn("Warning: gpt-3.5-turbo may update over time. Returning num tokens assuming gpt-3.5-turbo-0613.")
++                logging.warning("Warning: gpt-3.5-turbo may update over time. Returning num tokens assuming gpt-3.5-turbo-0613.")
+             if model == "gpt-4":
+-                logging.warn("Warning: gpt-4 may update over time. Returning num tokens assuming gpt-4-0613.")
++                logging.warning("Warning: gpt-4 may update over time. Returning num tokens assuming gpt-4-0613.")
+         else:
+             raise NotImplementedError(
+                 f"""num_tokens_from_messages() is not implemented for model {model}. See https://github.com/openai/openai-python/blob/main/chatml.md for information on how messages are converted to tokens."""
+@@ -211,10 +224,10 @@ class ChatGPT(ChatBot):
+         if model in PRICE:
+             return PRICE[model]
+         elif "gpt-3.5-turbo" in model:
+-            logging.warn("Warning: unclear model, taking price of gpt-3.5-turbo-0613.")
++            logging.warning("Warning: unclear model, taking price of gpt-3.5-turbo-0613.")
+             return PRICE["gpt-3.5-turbo-0613"]
+         elif "gpt-4" in model:
+-            logging.warn("Warning: unclear model, taking price of gpt-4-0314.")
++            logging.warning("Warning: unclear model, taking price of gpt-4-0314.")
+             return PRICE["gpt-4-0314"]
+         else:
+             raise NotImplementedError(
+diff --git a/src/JobTracker/utils.py b/src/JobTracker/utils.py
+index bbba25f..0b16e6f 100644
+--- a/src/JobTracker/utils.py
++++ b/src/JobTracker/utils.py
+@@ -1,11 +1,9 @@
+ import re
+ import email.utils
+ import mailbox
+-import requests
+ from .config import KEYWORD
+ from email.header import decode_header
+ from email.utils import parseaddr
+-from bs4 import BeautifulSoup
+ 
+ class EmailMessage:
+ 
+@@ -43,6 +41,7 @@ class EmailMessage:
+         if content_type == 'text/plain':
+             text = self.cleanup_body(mail.get_payload(decode=True).decode(errors='ignore'))
+         elif content_type == 'text/html':
++            from bs4 import BeautifulSoup
+             html_text = mail.get_payload(decode=True).decode(errors='ignore')
+             soup = BeautifulSoup(html_text, 'html.parser')
+             text = self.cleanup_body(soup.get_text())
+diff --git a/tests/test_chatbot.py b/tests/test_chatbot.py
+index 2c07aac..c71420c 100644
+--- a/tests/test_chatbot.py
++++ b/tests/test_chatbot.py
+@@ -4,30 +4,21 @@ from datetime import datetime
+ from unittest.mock import patch, MagicMock
+ from src.JobTracker.chatbot import ChatBot, ChatGPT
+ 
+-MODEL_LIST_RETURN = {
+-    "object": "list",
+-    "data": [
+-        {
+-            "id": "gpt-3.5-turbo",
+-            "object": "model",
+-            "created": None,
+-            "owned_by": "openai",
+-        },
+-        {
+-            "id": "gpt-4-1106-preview",
+-            "object": "model",
+-            "created": None,
+-            "owned_by": "openai",
+-        }
+-    ],
+-    "model": None
+-}
++def make_model_page():
++    # v1 shape: client.models.list() returns a page with .data of model objects
++    page = MagicMock()
++    gpt35 = MagicMock()
++    gpt35.id = "gpt-3.5-turbo"
++    gpt4 = MagicMock()
++    gpt4.id = "gpt-4-1106-preview"
++    page.data = [gpt35, gpt4]
++    return page
+ 
+ class TestChatBot(unittest.TestCase):
+ 
+-    @patch('openai.Model.list')
+-    def test_gen_prompt(self, mock_model_list):
+-        mock_model_list.return_value = MODEL_LIST_RETURN
++    @patch('src.JobTracker.chatbot.OpenAI')
++    def test_gen_prompt(self, mock_openai):
++        mock_openai.return_value.models.list.return_value = make_model_page()
+         chat_bot = ChatGPT()
+         info = "This is a test email body."
+         expected_threshold = 80  # Replace with the actual threshold value used in your method
+@@ -39,33 +30,28 @@ class TestChatBot(unittest.TestCase):
+ 
+ class TestChatGPT(unittest.TestCase):
+ 
+-    @patch('openai.Model.list')
+-    def setUp(self, mock_model_list):
+-        mock_model_list.return_value = MODEL_LIST_RETURN
++    @patch('src.JobTracker.chatbot.OpenAI')
++    def setUp(self, mock_openai):
++        mock_openai.return_value.models.list.return_value = make_model_page()
+         self.chat_gpt = ChatGPT()
+ 
+-    @patch('openai.ChatCompletion.create')
+     @patch('src.JobTracker.config')
+-    def test_get_content_succeed(self, mock_config, mock_openai_chatcompletion_create):
++    def test_get_content_succeed(self, mock_config):
+         info = {'body': 'test email body', 'date': "Thu, 09 Nov 2023 23:27:06 +0000"}
+         mock_config.API_KEY = 'test_api_key'
+         mock_config.FUNCTION = 'test_function'
+-        # Mock the API response
++        # Mock the API response (v1 shape: pydantic-style attribute access)
+         mock_choice = MagicMock()
+         mock_choice.finish_reason = 'function_call'
+-        mock_choice.message = {
+-            'function_call': {
+-                'arguments': json.dumps({
+-                    'company': 'TestCompany',
+-                    'state': 'TestState',
+-                    'next_step': 'TestNextStep'
+-                })
+-            }
+-        }
++        mock_choice.message.function_call.arguments = json.dumps({
++            'company': 'TestCompany',
++            'state': 'TestState',
++            'next_step': 'TestNextStep'
++        })
+ 
+         mock_response = MagicMock()
+         mock_response.choices = [mock_choice]
+-        mock_openai_chatcompletion_create.return_value = mock_response
++        self.chat_gpt.client.chat.completions.create.return_value = mock_response
+         state, data = self.chat_gpt.get_content(info)
+         date_object = datetime.strptime(info['date'], "%a, %d %b %Y %H:%M:%S %z")
+         month_day_year_time = date_object.strftime("%b %d %Y %H:%M:%S")
+@@ -74,19 +60,18 @@ class TestChatGPT(unittest.TestCase):
+         self.assertEqual(data['state'], json.dumps({"TestState": month_day_year_time}))
+         self.assertEqual(data['next_step'], 'TestNextStep')
+ 
+-    @patch('openai.ChatCompletion.create')
+     @patch('src.JobTracker.config')
+-    def test_get_content_failed(self, mock_config, mock_openai_chatcompletion_create):
++    def test_get_content_failed(self, mock_config):
+         info = {'body': 'test email body'}
+         mock_config.API_KEY = 'test_api_key'
+         mock_config.FUNCTION = 'test_function'
+         # Mock the API response
+         mock_choice = MagicMock()
+         mock_choice.finish_reason = 'other'
+-        mock_choice.message = {}
++        mock_choice.message = MagicMock()
+         mock_response = MagicMock()
+         mock_response.choices = [mock_choice]
+-        mock_openai_chatcompletion_create.return_value = mock_response
++        self.chat_gpt.client.chat.completions.create.return_value = mock_response
+ 
+         state, data = self.chat_gpt.get_content(info)
+ 
