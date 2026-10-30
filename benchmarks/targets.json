@@ -3,5 +3,9 @@
   "ddavarma/fleet-telemetry-v1": {
     "benchmark": "benchmarks/robotics_telemetry_drift",
     "holdout": "benchmarks/robotics_telemetry_drift/holdout_v2"
+  },
+  "ddavarma/JobTracker-driftzero-test": {
+    "benchmark": "benchmarks/jobtracker_openai_v1",
+    "holdout": "benchmarks/jobtracker_openai_v1/holdout_v2"
   }
 }
