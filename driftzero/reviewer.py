@@ -47,6 +47,14 @@ class Finding(BaseModel):
     evidence: str
     explanation: str
     suggested_fix: str
+    confidence: float | None = None  # v2.1: 0.0-1.0 that this is a real problem; None (v1/v2 logs) counts as 1.0
+
+    @property
+    def conf(self) -> float:
+        return 1.0 if self.confidence is None else float(self.confidence)
+
+
+CONFIDENT = 0.5  # findings at or above this are "Review findings"; below are "Possible issues (low confidence)"
 
 
 class ReviewResult(BaseModel):
@@ -65,7 +73,8 @@ SCHEMA_TEXT = """{
       "line_hint": "new-file line number of the most relevant added line, e.g. \\"50\\", or \\"\\" if none",
       "evidence": "the exact diff line(s) you are talking about, copied verbatim with their leading + or -",
       "explanation": "what is wrong and why it matters, 1-4 sentences",
-      "suggested_fix": "a concrete change, 1-3 sentences"
+      "suggested_fix": "a concrete change, 1-3 sentences",
+      "confidence": 0.0-1.0, your honest probability that this is a real problem
     }
   ]
 }"""
@@ -103,8 +112,10 @@ they show which expectations the new library code has to meet; use them to judge
 a test rather than by the specification.
 
 Rules: base every finding on lines that appear in the diff and quote them verbatim in `evidence`. Do not report
-style or naming nits. Report nothing you are unsure is real; an empty findings list with verdict "approve" is a valid
-answer. Use "request_changes" only if at least one finding is high severity.
+style or naming nits. Report EVERY candidate finding you considered, each with an honest `confidence` (0.0-1.0) that
+it is a real problem. Suppression is not allowed; low confidence is. Do not drop a finding because you are unsure:
+report it with the confidence you actually have. Use "approve" only if no finding has confidence >= 0.5, and
+"request_changes" only if at least one high-severity finding has confidence >= 0.5.
 
 Reply with ONE JSON object and nothing else, matching exactly:
 {SCHEMA_TEXT}"""
@@ -139,15 +150,28 @@ class ReviewOutcome:
     status: str = "ok"  # ok | incomplete (hit max_tokens; never an approval) | failed (no valid JSON)
     finish_reasons: list[str] = field(default_factory=list)
     test_context: list[str] = field(default_factory=list)  # names of the unchanged tests included
-    version: int = 2
+    version: str = "2.1"
+
+    @property
+    def confident(self) -> list[Finding]:
+        return [f for f in (self.result.findings if self.result else []) if f.conf >= CONFIDENT]
+
+    @property
+    def low_confidence(self) -> list[Finding]:
+        return [f for f in (self.result.findings if self.result else []) if f.conf < CONFIDENT]
 
     @property
     def verdict_label(self) -> str:
+        """The model's verdict, made consistent with the policy: approve iff nothing has confidence >= 0.5."""
         if self.status == "incomplete":
             return "reviewer_incomplete"
         if self.result is None:
             return "reviewer_failed"
-        return self.result.verdict
+        if not self.confident:
+            return "approve"
+        if any(f.severity == "high" for f in self.confident) and self.result.verdict == "request_changes":
+            return "request_changes"
+        return "comment"
 
     def log_record(self) -> dict:
         return {"provider": self.provider, "model": self.model, "reasoning_effort": self.effort,
@@ -386,7 +410,8 @@ def locate(f: Finding, lines: dict[str, dict[int, str]]) -> tuple[str, int] | No
 def _finding_md(f: Finding, with_location: bool = True) -> str:
     where = f"`{f.file}`" + (f" (line {f.line_hint})" if f.line_hint else "") if with_location else ""
     ev = "\n".join("    " + ln for ln in f.evidence.splitlines())
-    return (f"**{f.severity} · {f.category}** {where}\n\n{f.explanation}\n\n{ev}\n\n"
+    conf = "" if f.confidence is None else f" · confidence {f.conf:.2f}" + (" (low)" if f.conf < CONFIDENT else "")
+    return (f"**{f.severity} · {f.category}{conf}** {where}\n\n{f.explanation}\n\n{ev}\n\n"
             f"Suggested fix: {f.suggested_fix}")
 
 
@@ -402,7 +427,7 @@ def post_review(slug: str, pr_number: int | str, outcome: ReviewOutcome, diff: s
             inline.append({"path": loc[0], "line": loc[1], "side": "RIGHT", "body": _finding_md(f, with_location=False)})
         else:
             body_only.append(f)
-    high = any(f.severity == "high" for f in (res.findings if res else []))
+    high = any(f.severity == "high" for f in outcome.confident)
     event = "REQUEST_CHANGES" if (strict and high) else "COMMENT"
     head = [f"### {REVIEWER_LABEL} v{outcome.version} (`{outcome.model}` on {outcome.provider.title()}, "
             f"reasoning_effort={outcome.effort})",
@@ -413,7 +438,8 @@ def post_review(slug: str, pr_number: int | str, outcome: ReviewOutcome, diff: s
     elif res is None:
         head.append(f"Review failed: {outcome.error}")
     else:
-        head.append(f"Verdict: **{res.verdict}** · {len(res.findings)} finding(s), {len(inline)} inline · "
+        head.append(f"Verdict: **{outcome.verdict_label}** · {len(outcome.confident)} finding(s) with confidence >= "
+                    f"{CONFIDENT}, {len(outcome.low_confidence)} low-confidence, {len(inline)} inline · "
                     f"${outcome.cost.usd or 0:.4f}, {outcome.latency_s:.0f} s")
     if body_only:
         head += ["", "Findings without a matching diff line:", ""] + [_finding_md(f) for f in body_only]
@@ -446,7 +472,7 @@ def outcome_from_record(rec: dict) -> ReviewOutcome:
         reasoning=rec.get("reasoning_content") or [], raw=rec.get("raw_content") or [], error=rec.get("error"),
         status=rec.get("status") or ("ok" if rec.get("result") else "failed"),
         finish_reasons=rec.get("finish_reasons") or [], test_context=rec.get("test_context") or [],
-        version=rec.get("reviewer_version", 1))
+        version=str(rec.get("reviewer_version", 1)))
 
 
 def latest_logged(paths: list[Path]) -> ReviewOutcome | None:

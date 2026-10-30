@@ -77,7 +77,7 @@ def test_review_findings_and_collapsed_added_tests(verified):
     res, _ = verified
     body = pr.render_body(res)
     findings = body.split("## Review findings")[1].split("## API change")[0]
-    assert "| source | severity | kind | where | finding |" in findings
+    assert "| source | severity (confidence) | kind | where | finding |" in findings
     assert "| guard (static) | – | stale test name | `" in findings and "test_client_hits_v1_paths" in findings
     changes = body.split("## Test changes, review required")[1].split("## Verification")[0]
     assert "`['/v1/robots/amr-03/telemetry/latest', '/v1/fleet/telemetry']` → `['/v2/robots" in changes
@@ -231,3 +231,50 @@ def test_verified_review_fix_commits_pushes_and_rereviews(verified, monkeypatch)
     assert "Muse Spark Open reviewer (pass 2)" in body
     events = [json.loads(line)["event"] for line in res.log_path.read_text().splitlines()]
     assert events[-1] == "review_fix" and "iteration" in events
+
+
+def _outcome(findings, verdict="comment"):
+    return reviewer_mod.ReviewOutcome(result=reviewer_mod.ReviewResult(verdict=verdict, findings=findings),
+                                      provider="baseten", model="meta-models/muse-spark-open-1026", effort="high",
+                                      cost=Cost(1, 0, 1, 0, 0.03), latency_s=20, attempts=1)
+
+
+def test_v21_confidence_split_and_policy_verdict(verified):
+    res, _ = verified
+    sure = FINDING.model_copy(update={"confidence": 0.8})
+    unsure = FINDING.model_copy(update={"confidence": 0.3, "category": "precision_loss", "explanation": "Maybe lossy."})
+    res.review = _outcome([sure, unsure])
+    body = pr.render_body(res)
+    findings = body.split("## Review findings")[1].split("## API change")[0]
+    assert "| Muse Spark Open reviewer | medium (0.80) | test_shaped_code |" in findings
+    low = findings.split("**Possible issues (low confidence).**")[1]
+    assert "| 0.30 | medium | precision_loss |" in low and "Maybe lossy." in low
+    assert "Maybe lossy." not in findings.split("**Possible issues")[0]
+    assert "verdict **comment**, 1 finding(s) with confidence >= 0.5, 1 low-confidence" in findings
+    # approve iff nothing reaches 0.5, whatever the model said
+    assert _outcome([unsure], verdict="comment").verdict_label == "approve"
+    assert _outcome([sure], verdict="approve").verdict_label == "comment"
+    # legacy (v1/v2) findings have no confidence and count as confident
+    assert _outcome([FINDING]).verdict_label == "comment" and FINDING.conf == 1.0
+
+
+def test_v21_fix_trigger_threshold(verified, monkeypatch):
+    res, _ = verified
+    mid = FINDING.model_copy(update={"confidence": 0.45})
+    low_sev = FINDING.model_copy(update={"confidence": 0.9, "severity": "low"})
+    out = _outcome([mid, low_sev])
+    assert pr.fix_candidates(out) == [] and pr.fix_candidates(out, 0.3) == [mid]
+    pr.open_pr(res, create=False)
+
+    def noop_iteration(wt, spec, br, n, of, **kw):
+        rec = {"iteration": n, "kind": "review_fix", "passed": False, "wall_time_s": 1.0,
+               "repair": {"steps": 1, "duration_s": 1.0}, "cost": {}, "diff": {}, "verify": None,
+               "guard": {"ok": True, "rejections": [], "review_items": []}}
+        return rec, SimpleNamespace(steps=1, answer=None), Cost(), None, None, None
+
+    monkeypatch.setattr(loop_mod, "run_iteration", noop_iteration)
+    res.settings = {"holdout": None, "local": True}
+    info = pr.apply_review_fix(res, "https://github.com/o/r/pull/9", out, on_line=lambda s: None, min_confidence=0.3)
+    assert info["min_confidence"] == 0.3 and [f["confidence"] for f in info["findings"]] == [0.45]
+    section = pr.render_body(res).split("## Reviewer-driven fixes")[1].split("## API change")[0]
+    assert "confidence >= **0.3** (lowered from the default 0.6 by a manual `driftzero review-fix` run" in section

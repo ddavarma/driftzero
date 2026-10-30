@@ -30,6 +30,7 @@ from driftzero.spec import DriftSpec
 from driftzero.telemetry import Cost
 
 LOG_CHARS = 6000  # per pytest log inside <details>
+DEFAULT_FIX_CONFIDENCE = 0.6  # --review-fix triggers on severity >= medium and confidence >= this
 REVIEW_TABLE_RULES = ("literal_change", "fixture_data")
 FINDING_RULES = ("stale_test_name", "loosened", "modified_test")
 
@@ -138,7 +139,7 @@ def _lead(res: LoopResult, diff: repair_mod.RepairDiff, t: dict) -> list[str]:
 
 
 def _findings(res: LoopResult) -> list[str]:
-    from driftzero.reviewer import REVIEWER_LABEL
+    from driftzero.reviewer import CONFIDENT, REVIEWER_LABEL
 
     g = res.guard
     labels = {"stale_test_name": "stale test name", "loosened": "comparison loosened", "modified_test": "test edited"}
@@ -156,18 +157,30 @@ def _findings(res: LoopResult) -> list[str]:
     rv = res.review
     second = bool(res.review_fix and res.review_fix.get("second_review"))
     pass_label = " (pass 2)" if second else ""
+    def conf_txt(f) -> str:
+        return "" if f.confidence is None else f" ({f.conf:.2f})"
+
+    low_rows = []
     if rv is not None and rv.result is not None:
-        for f in rv.result.findings:
+        for f in rv.confident:
             where = f.file + (f":{f.line_hint}" if f.line_hint else "")
-            rows.append(f"| {REVIEWER_LABEL}{pass_label} | {f.severity} | {f.category} | {_code(where)} | "
+            rows.append(f"| {REVIEWER_LABEL}{pass_label} | {f.severity}{conf_txt(f)} | {f.category} | {_code(where)} | "
                         f"{_md(f.explanation)} *Fix:* {_md(f.suggested_fix)} |")
-    out = ["| source | severity | kind | where | finding |", "|---|---|---|---|---|", *rows] if rows else []
+        for f in rv.low_confidence:
+            where = f.file + (f":{f.line_hint}" if f.line_hint else "")
+            low_rows.append(f"| {f.conf:.2f} | {f.severity} | {f.category} | {_code(where)} | {_md(f.explanation)} |")
+    out = ["| source | severity (confidence) | kind | where | finding |", "|---|---|---|---|---|", *rows] if rows else []
+    if low_rows:
+        out += ["", f"**Possible issues (low confidence).** The reviewer must report every candidate it considered; "
+                f"these are below {CONFIDENT} confidence and do not affect the verdict:", "",
+                "| confidence | severity | kind | where | finding |", "|---|---|---|---|---|", *low_rows]
     if rv is not None:
         if rv.status == "incomplete":
             status = ("**reviewer_incomplete**: ran out of its token budget before finishing; this is not an "
                       "approval" + (f" (partial findings: {len(rv.result.findings)})" if rv.result else ""))
         elif rv.result:
-            status = f"verdict **{rv.result.verdict}**, {len(rv.result.findings)} finding(s)"
+            status = (f"verdict **{rv.verdict_label}**, {len(rv.confident)} finding(s) with confidence >= {CONFIDENT}, "
+                      f"{len(rv.low_confidence)} low-confidence")
         else:
             status = f"review failed ({_md(rv.error)})"
         out += ["", f"{REVIEWER_LABEL}{pass_label}: `{rv.model}` on {rv.provider.title()}, reasoning_effort={rv.effort}: {status}; "
@@ -190,8 +203,15 @@ def _review_fix_section(res: LoopResult) -> list[str]:
     commit_url = f"https://github.com/{slug}/commit/{rf['commit']}" if rf.get("commit") and slug else None
     responses = {r["finding"]: r for r in rf.get("responses") or []}
     hunks: dict[str, list[str]] = rf.get("hunks") or {}
+    thr = rf.get("min_confidence")
+    thr_txt = ""
+    if thr is not None:
+        thr_txt = (f" Trigger: severity >= medium and confidence >= **{thr}**"
+                   + (f" (lowered from the default {DEFAULT_FIX_CONFIDENCE} by a manual `driftzero review-fix` run, so "
+                      "the fix path could be exercised; the default would not have fired)" if thr < DEFAULT_FIX_CONFIDENCE
+                      else " (the default)") + ".")
     out = [f"The first review ({REVIEWER_LABEL}, verdict **{rf['first_verdict']}**) raised "
-           f"{len(rf['findings'])} finding(s), at least one medium or high. DriftZero ran one extra repair iteration "
+           f"{len(rf['findings'])} finding(s) that met the trigger.{thr_txt} DriftZero ran one extra repair iteration "
            f"(iteration {rf['iteration']}, the hard cap) with the findings verbatim, asking Muse to address each or "
            "justify leaving it, under the same hard rules, then re-ran the guard, sandbox verification with "
            "hold-outs, and a second review.", "",
@@ -205,7 +225,8 @@ def _review_fix_section(res: LoopResult) -> list[str]:
                              for h in hunks[path])
         else:
             refs = "–"
-        out.append(f"| {i} | {f['severity']} · {f['category']} · {_code(f['file'])}: {_md(f['explanation'])} | "
+        conf = f" · conf {f['confidence']:.2f}" if f.get("confidence") is not None else ""
+        out.append(f"| {i} | {f['severity']} · {f['category']}{conf} · {_code(f['file'])}: {_md(f['explanation'])} | "
                    f"{resp} | {refs} |")
     v = rf.get("verify") or {}
     if rf.get("no_change"):
@@ -221,8 +242,9 @@ def _review_fix_section(res: LoopResult) -> list[str]:
                 "contains the first, verified version."]
     sr = rf.get("second_review")
     if sr:
-        out += ["", f"Second review: verdict **{sr['verdict']}**, {sr['findings']} finding(s) (listed under Review "
-                "findings above)."]
+        out += ["", f"Second review: verdict **{sr['verdict']}**, {sr['findings']} finding(s) with confidence >= 0.5"
+                + (f", {sr['low_confidence']} low-confidence" if sr.get("low_confidence") is not None else "")
+                + " (listed under Review findings above)."]
     return out
 
 
@@ -467,6 +489,7 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
 
     res.review = latest_logged([runs / f"{task_id}.jsonl", runs / f"{task_id}.review.jsonl"])
     res.review_fix = next((e for e in reversed(events) if e["event"] == "review_fix"), None)
+    res.settings = {k: start.get(k) for k in ("holdout", "local", "dry_run", "contributor", "model")}
     if res.review is not None and res.review.cost.usd is not None:
         res.cost = res.cost + res.review.cost
     return res, spec_path
@@ -553,17 +576,26 @@ def fix_hunks(cwd: Path, a: str, b: str) -> dict[str, list[str]]:
     return out
 
 
+def fix_candidates(outcome, min_confidence: float = DEFAULT_FIX_CONFIDENCE) -> list:
+    """Findings that trigger --review-fix: severity medium/high and confidence >= min_confidence."""
+    if outcome is None or outcome.result is None:
+        return []
+    return [f for f in outcome.result.findings if f.severity in ("medium", "high") and f.conf >= min_confidence]
+
+
 def apply_review_fix(res: LoopResult, pr_url: str, first, *, provider: str = "baseten", strict: bool = False,
-                     changelog: str | None = None, on_line=print) -> dict:
-    """--review-fix: one extra repair iteration on the first review's findings, then guard, verify, push, re-review."""
+                     changelog: str | None = None, on_line=print,
+                     min_confidence: float = DEFAULT_FIX_CONFIDENCE) -> dict:
+    """--review-fix: one extra repair iteration on the triggering findings, then guard, verify, push, re-review."""
     from driftzero.loop import review_fix_iteration
 
     wt = res.worktree
-    findings = list(first.result.findings)
+    findings = fix_candidates(first, min_confidence)
     prev = _git(wt.path, "rev-parse", "HEAD")
     rec = review_fix_iteration(res, findings, on_line=on_line)
     answer = rec.get("answer")
     info = {"first_verdict": first.verdict_label, "findings": [f.model_dump() for f in findings],
+            "min_confidence": min_confidence,
             "responses": [r.model_dump() for r in (answer.reviewer_responses if answer else [])],
             "iteration": rec["iteration"], "verified": rec["passed"], "reverted": rec["reverted"],
             "guard_ok": rec["guard"]["ok"], "verify": rec["verify"], "prev_commit": prev, "commit": None,
@@ -581,7 +613,8 @@ def apply_review_fix(res: LoopResult, pr_url: str, first, *, provider: str = "ba
         on_line(f"pushed review fix {sha[:10]}; second review")
         posted = review_pr(res, pr_url, provider=provider, strict=strict, changelog=changelog)
         rv = res.review
-        info["second_review"] = {"verdict": rv.verdict_label, "findings": len(rv.result.findings) if rv.result else 0,
+        info["second_review"] = {"verdict": rv.verdict_label, "findings": len(rv.confident),
+                                 "low_confidence": len(rv.low_confidence),
                                  "url": posted["url"], "usd": rv.cost.usd}
         if rv.cost.usd:
             res.cost = res.cost + rv.cost

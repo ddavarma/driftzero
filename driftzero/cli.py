@@ -38,6 +38,8 @@ def migrate(
     review_fix: bool = typer.Option(False, "--review-fix",
                                     help="If the review has a medium/high finding, run ONE extra repair iteration on it, "
                                          "re-verify, push, and review again."),
+    review_fix_min_confidence: float = typer.Option(0.6, help="--review-fix triggers on severity >= medium and "
+                                                              "confidence >= this."),
 ) -> None:
     """(diff ->) blast radius -> Muse repair -> guard -> sandbox verify (retrying) -> PR -> open-weights review."""
     import shlex
@@ -93,19 +95,51 @@ def migrate(
         if rv.cost.usd:
             res.cost = res.cost + rv.cost
         pr_mod.update_body(res, pr.url, pr_s=pr.pr_s, spec_path=str(spec))
-        actionable = rv.result is not None and any(f.severity in ("medium", "high") for f in rv.result.findings)
+        actionable = bool(pr_mod.fix_candidates(rv, review_fix_min_confidence))
         if review_fix and actionable:
             typer.echo("=== review fix: one extra repair iteration on the reviewer's findings")
             info = pr_mod.apply_review_fix(res, pr.url, rv, provider=reviewer_provider, strict=strict,
-                                           changelog=cl_text)
+                                           changelog=cl_text, min_confidence=review_fix_min_confidence)
             sr = info.get("second_review")
             typer.echo(f"review fix: {'verified, pushed ' + info['commit'][:10] if info['verified'] else 'not verified, reverted'}"
                        + (f"; second review: {sr['verdict']}, {sr['findings']} finding(s)" if sr else ""))
             pr_mod.update_body(res, pr.url, pr_s=pr.pr_s, spec_path=str(spec))
         elif review_fix:
-            typer.echo("review fix: nothing medium/high to address")
+            typer.echo(f"review fix: no finding with severity >= medium and confidence >= {review_fix_min_confidence}")
     usd = "n/a" if res.cost.usd is None else f"${res.cost.usd:.4f}"
     typer.echo(f"{len(res.iterations)} iteration(s), {usd} total, {time.monotonic() - t_start:.0f}s wall end to end")
+
+
+@app.command("review-fix")
+def review_fix_cmd(
+    task: str = typer.Option(..., help="Task id of a finished, PR-opened run."),
+    review_fix_min_confidence: float = typer.Option(0.6, help="Trigger on severity >= medium and confidence >= this."),
+    reviewer_provider: str = typer.Option("baseten", help="baseten | fireworks (for the second review)."),
+    strict: bool = typer.Option(False, "--strict"),
+) -> None:
+    """Run the --review-fix pass on a finished run's latest review: one extra repair iteration, verify, push, re-review."""
+    from driftzero import pr as pr_mod
+    from driftzero.target import home_dir
+
+    home = home_dir()
+    res, spec_path = pr_mod.load_run(home, task)
+    events = [json.loads(line) for line in res.log_path.read_text().splitlines()]
+    pr_ev = next((e for e in reversed(events) if e["event"] == "pr" and e.get("url")), None)
+    if pr_ev is None:
+        raise typer.BadParameter(f"no PR recorded for {task}")
+    if res.review is None:
+        raise typer.BadParameter(f"no review recorded for {task}")
+    cands = pr_mod.fix_candidates(res.review, review_fix_min_confidence)
+    typer.echo(f"{len(cands)} finding(s) at severity >= medium and confidence >= {review_fix_min_confidence}")
+    if not cands:
+        raise typer.Exit(0)
+    info = pr_mod.apply_review_fix(res, pr_ev["url"], res.review, provider=reviewer_provider, strict=strict,
+                                   min_confidence=review_fix_min_confidence)
+    sr = info.get("second_review")
+    typer.echo(f"review fix: {'verified, pushed ' + info['commit'][:10] if info.get('commit') else ('verified, no change' if info.get('no_change') else 'not verified, reverted')}"
+               + (f"; second review: {sr['verdict']}, {sr['findings']} confident finding(s)" if sr else ""))
+    pr_mod.update_body(res, pr_ev["url"], pr_s=pr_ev.get("pr_s"), spec_path=spec_path)
+    typer.echo(f"PR body updated: {pr_ev['url']}")
 
 
 @app.command()

@@ -175,3 +175,11 @@ def test_covering_tests_on_real_repair():
     small, few = reviewer.covering_tests(br, diff, "benchmarks/robotics_telemetry_drift",
                                          lambda rel: (BENCH / rel).read_text(), cap=12)
     assert 0 < len(few) < len(names) and small.count("\n") + 1 <= 12
+
+
+def test_v21_prompt_requires_confidence_and_forbids_suppression():
+    sys_ = reviewer.SYSTEM.replace("\n", " ")
+    assert "Report nothing you are unsure is real" not in sys_
+    assert "Suppression is not allowed; low confidence is." in sys_
+    assert '"confidence": 0.0-1.0' in reviewer.SYSTEM
+    assert "round" not in reviewer.SYSTEM.lower()
