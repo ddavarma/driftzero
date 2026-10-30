@@ -49,8 +49,14 @@ driftzero migrate --repo https://github.com/ddavarma/fleet-telemetry-v1 \
       │                         redacted to test name + one-line message
       ▼ pass
  pull request      driftzero/pr.py             commit, push driftzero/<id> to the target's origin, gh pr create -R:
-                                                lead box, agent summary, review findings, DriftSpec, blast radius
-                                                with test coverage, test changes, hold-out results, cost, logs
+      │                                         lead box, agent summary, review findings, DriftSpec, blast radius
+      │                                         with test coverage, test changes, hold-out results, cost, logs
+      ▼
+ code review       driftzero/reviewer.py       Muse Spark Open (open weights) on Baseten (or --reviewer-provider
+                                                fireworks), JSON mode, told what the guard already checks; looks for
+                                                test-shaped code, precision changes, unrequested behaviour changes,
+                                                compat paths. Posted as a PR review (inline where the line maps) and
+                                                added to "Review findings" with its source. --no-review skips it.
 ```
 
 Every stage also runs on its own: `driftzero diff`, `driftzero blast`, `driftzero repair [--dry-run]`, `driftzero verify [--local]`,
@@ -85,7 +91,9 @@ driftzero migrate --repo https://github.com/ddavarma/fleet-telemetry-v1 \
 driftzero pr-body --task <id> [--update <pr>]                         # re-render a PR body from a saved run
 ```
 
-`--contributor` uses Meta's contributor tier (about 12x cheaper, but Meta trains on it; for development only).
+`driftzero review --task <id> [--pr <url>] [--effort high|xhigh] [--reuse]` runs the reviewer on a finished run.
+`--strict` posts REQUEST_CHANGES when a finding is high severity (GitHub refuses that on your own PR; DriftZero then
+posts a COMMENT and says so). `--contributor` uses Meta's contributor tier (about 12x cheaper, but Meta trains on it; for development only).
 `--local` verifies in a temp copy instead of Modal. `--max-iterations N` caps the repair/verify loop.
 
 ## The benchmark
@@ -117,6 +125,14 @@ Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md
 
 ## Limitations
 
+- **The open-weights reviewer did not catch the rounding.** Run unaided on DriftZero PR #1, Muse Spark Open
+  (`reasoning_effort=high`) approved with no findings. Its reasoning did ask "Could there be magic constants like
+  rounding to 3 decimals to make test pass?", then accepted Muse's code comment ("quoted to 1e-3 deg (v1 wire
+  resolution)") and asserted the spec says so, which it does not. At `xhigh` it got closer ("Why 3? ... no spec
+  mentions. Could be test_shaped...") but spent all 8,000 tokens reasoning and returned nothing, twice. The test the
+  rounding serves (`frame.pose.yaw == 87.0`) is unchanged, so it is not in the diff the reviewer sees. Logs:
+  [`docs/runs/*.review.jsonl`](docs/runs/). It also did not repeat the guard's `approx` finding on fleet-telemetry-v1,
+  as instructed.
 - **Rounding-style smells pass.** Twice Muse rounded the derived Euler angles to 3 decimals so a pre-existing exact
   check (`yaw == 87.0`) kept passing. Nothing here catches library code bent to fit a test: the guard only inspects
   test files, and the hold-outs use tolerances. It shows up only in human review of the diff. (When Muse instead
