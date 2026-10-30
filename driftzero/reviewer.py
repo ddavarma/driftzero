@@ -33,7 +33,8 @@ REVIEWERS = {
     "fireworks": "accounts/fireworks/models/muse-spark-open",
 }
 REVIEWER_LABEL = "Muse Spark Open reviewer"
-MAX_TOKENS = 8000
+MAX_TOKENS = 24000  # Baseten and Fireworks; at 8,000 xhigh spent everything on reasoning
+TEST_CONTEXT_MAX_LINES = 300
 DEFAULT_EFFORT = "high"
 
 
@@ -93,6 +94,14 @@ Look instead at what the guard is blind to, chiefly in the LIBRARY code:
   alive in a way that hides the migration) or that are missing where callers still need them.
 - other: anything else a careful reviewer would block or question.
 
+Epistemics: code comments, docstrings and commit-style explanations in the diff are the repair agent's CLAIMS, not
+facts. Check every justification they give against the DriftSpec and the changelog. If the code relies on a
+justification that neither document supports, that unsupported justification is itself a finding.
+
+You also get the unchanged tests that exercise the modified library functions. They are not part of the diff, but
+they show which expectations the new library code has to meet; use them to judge whether library code is shaped by
+a test rather than by the specification.
+
 Rules: base every finding on lines that appear in the diff and quote them verbatim in `evidence`. Do not report
 style or naming nits. Report nothing you are unsure is real; an empty findings list with verdict "approve" is a valid
 answer. Use "request_changes" only if at least one finding is high severity.
@@ -101,13 +110,16 @@ Reply with ONE JSON object and nothing else, matching exactly:
 {SCHEMA_TEXT}"""
 
 
-def build_user_prompt(diff: str, guard_items: list[str], spec: DriftSpec, changelog: str | None) -> str:
+def build_user_prompt(diff: str, guard_items: list[str], spec: DriftSpec, changelog: str | None,
+                      test_context: str | None = None) -> str:
     return "\n".join([
         "## DriftSpec (the intended change)", "```json", spec.model_dump_json(indent=1), "```", "",
         "## Upstream changelog", changelog.strip() if changelog else "(not provided)", "",
         "## Already reported by the static guard (do not repeat)",
         *(f"- {g}" for g in guard_items), *([] if guard_items else ["(nothing)"]), "",
         "## Diff under review (library and tests)", "```diff", diff, "```", "",
+        "## Unchanged tests exercising modified code (context only: NOT part of the diff, NOT modified by the agent)",
+        "```python", test_context or "# (none found)", "```", "",
         "Return the JSON review.",
     ])
 
@@ -124,24 +136,41 @@ class ReviewOutcome:
     reasoning: list[str] = field(default_factory=list)
     raw: list[str] = field(default_factory=list)
     error: str | None = None
+    status: str = "ok"  # ok | incomplete (hit max_tokens; never an approval) | failed (no valid JSON)
+    finish_reasons: list[str] = field(default_factory=list)
+    test_context: list[str] = field(default_factory=list)  # names of the unchanged tests included
+    version: int = 2
+
+    @property
+    def verdict_label(self) -> str:
+        if self.status == "incomplete":
+            return "reviewer_incomplete"
+        if self.result is None:
+            return "reviewer_failed"
+        return self.result.verdict
 
     def log_record(self) -> dict:
         return {"provider": self.provider, "model": self.model, "reasoning_effort": self.effort,
                 "attempts": self.attempts, "latency_s": self.latency_s, "cost": self.cost.as_dict(),
+                "status": self.status, "verdict": self.verdict_label, "finish_reasons": self.finish_reasons,
+                "max_tokens": MAX_TOKENS, "reviewer_version": self.version, "test_context": self.test_context,
                 "result": self.result.model_dump() if self.result else None, "error": self.error,
                 "reasoning_content": self.reasoning, "raw_content": self.raw}
 
 
 def review(diff: str, guard_items: list[str], spec: DriftSpec, changelog: str | None, *,
            provider: str = "baseten", effort: str = DEFAULT_EFFORT, client=None,
-           log_path: Path | None = None, task_id: str | None = None) -> ReviewOutcome:
+           log_path: Path | None = None, task_id: str | None = None,
+           test_context: tuple[str, list[str]] | None = None) -> ReviewOutcome:
+    """`test_context` is (source text, test names) from `covering_tests`."""
     model = REVIEWERS[provider]
     client = client or providers.get_client(provider)
+    ctx_text, ctx_names = test_context or (None, [])
     messages = [{"role": "system", "content": SYSTEM},
-                {"role": "user", "content": build_user_prompt(diff, guard_items, spec, changelog)}]
+                {"role": "user", "content": build_user_prompt(diff, guard_items, spec, changelog, ctx_text)}]
     total = Cost()
     out = ReviewOutcome(result=None, provider=provider, model=model, effort=effort, cost=total, latency_s=0.0,
-                        attempts=0)
+                        attempts=0, test_context=list(ctx_names))
     t0 = time.monotonic()
     for attempt in (1, 2):
         out.attempts = attempt
@@ -158,11 +187,24 @@ def review(diff: str, guard_items: list[str], spec: DriftSpec, changelog: str | 
         c = Cost(u.prompt_tokens, cached, u.completion_tokens, reasoning,
                  usd(model, u.prompt_tokens, cached, u.completion_tokens))
         total = total + c
+        finish = r.choices[0].finish_reason or ""
+        out.finish_reasons.append(finish)
+        if finish == "length":
+            # Ran out of budget: record it, never read it as an approval, and don't burn a second budget.
+            out.status = "incomplete"
+            try:
+                out.result = ReviewResult.model_validate_json(_strip_fences(content))
+            except (ValidationError, ValueError):
+                out.result = None
+            out.error = f"attempt {attempt}: finish_reason=length after {u.completion_tokens} tokens (max {MAX_TOKENS})"
+            break
         try:
             out.result = ReviewResult.model_validate_json(_strip_fences(content))
             out.error = None
+            out.status = "ok"
             break
         except (ValidationError, ValueError) as exc:
+            out.status = "failed"
             out.error = f"attempt {attempt}: {str(exc)[:500]} (finish_reason={r.choices[0].finish_reason})"
             messages += [{"role": "assistant", "content": content},
                          {"role": "user", "content": "That reply was not a valid JSON object for the required schema: "
@@ -178,6 +220,106 @@ def review(diff: str, guard_items: list[str], spec: DriftSpec, changelog: str | 
 def _strip_fences(text: str) -> str:
     m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S)
     return m.group(1) if m else text.strip()
+
+
+# --------------------------------------------------------------------------- unchanged tests covering changed code
+
+def diff_old_touched(diff: str) -> dict[str, set[int]]:
+    """file -> old-side line numbers that were removed, or where lines were inserted."""
+    out: dict[str, set[int]] = {}
+    path, old = None, 0
+    for raw in diff.splitlines():
+        if raw.startswith("--- "):
+            p = raw[4:]
+            path = None if p == "/dev/null" else p.removeprefix("a/")
+            if path is not None:
+                out.setdefault(path, set())
+        elif raw.startswith("+++ "):
+            continue
+        elif raw.startswith("@@"):
+            m = re.match(r"@@ -(\d+)", raw)
+            old = int(m.group(1)) if m else 0
+        elif path is None or raw.startswith(("diff ", "index ", "new file", "deleted file", "\\")):
+            continue
+        elif raw.startswith("-"):
+            out[path].add(old)
+            old += 1
+        elif raw.startswith("+"):
+            out[path].add(old)  # insertion point
+        else:
+            old += 1
+    return out
+
+
+def _numeric_equality_asserts(src: str) -> int:
+    """Asserts of the form `x == 87.0` (a numeric literal compared with ==, not via approx)."""
+    import ast
+
+    def is_num(n: ast.AST) -> bool:
+        if isinstance(n, ast.UnaryOp):
+            n = n.operand
+        return isinstance(n, ast.Constant) and isinstance(n.value, (int, float)) and not isinstance(n.value, bool)
+
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return 0
+    count = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assert) and isinstance(node.test, ast.Compare):
+            cmp = node.test
+            if any(isinstance(op, ast.Eq) for op in cmp.ops) and any(is_num(x) for x in [cmp.left, *cmp.comparators]):
+                count += 1
+    return count
+
+
+def covering_tests(br, diff: str, project_rel: str, base_source, *, cap: int = TEST_CONTEXT_MAX_LINES
+                   ) -> tuple[str, list[str]]:
+    """Source of unchanged test functions that reach a modified library function in the blast-radius link graph.
+
+    `br` is the BlastRadius of the project at the base commit (its line numbers are base lines), `base_source(path)`
+    returns a project-relative file's base text. Tests with exact numeric equality asserts come first; total <= cap lines.
+    """
+    from collections import defaultdict, deque
+
+    from driftzero.blast_radius import PROPAGATING
+    from driftzero.guard import _is_test_path
+
+    prefix = "" if project_rel in (".", "") else project_rel.rstrip("/") + "/"
+    touched = {p[len(prefix):]: lines for p, lines in diff_old_touched(diff).items() if p.startswith(prefix)}
+
+    def modified(sym) -> bool:
+        return any(sym.line <= n <= sym.end_line for n in touched.get(sym.file, ()))
+
+    changed_lib = {s.id for s in br.symbols if s.kind != "test" and not _is_test_path(s.file) and modified(s)}
+    adj: dict[str, set[str]] = defaultdict(set)
+    for e in br.edges:
+        if e.kind in PROPAGATING:
+            adj[e.src].add(e.dst)
+    picked = []
+    for t in (s for s in br.symbols if s.kind == "test"):
+        seen, queue = {t.id}, deque([t.id])
+        while queue:
+            for nxt in adj[queue.popleft()]:
+                if nxt not in seen:
+                    seen.add(nxt)
+                    queue.append(nxt)
+        if seen & changed_lib and not modified(t):
+            text = base_source(t.file)
+            if text is None:
+                continue
+            src = "\n".join(text.splitlines()[t.line - 1:t.end_line])
+            picked.append((t, src))
+    picked.sort(key=lambda ts: (-_numeric_equality_asserts(ts[1]), ts[0].file, ts[0].line))
+    blocks, names, used = [], [], 0
+    for t, src in picked:
+        n = src.count("\n") + 2
+        if used + n > cap:
+            continue
+        blocks.append(f"# {t.file}::{t.name}\n{src}")
+        names.append(f"{t.file}::{t.name}")
+        used += n
+    return "\n\n".join(blocks), names
 
 
 # --------------------------------------------------------------------------- mapping findings onto the diff
@@ -258,7 +400,10 @@ def post_review(slug: str, pr_number: int | str, outcome: ReviewOutcome, diff: s
     event = "REQUEST_CHANGES" if (strict and high) else "COMMENT"
     head = [f"### {REVIEWER_LABEL} (`{outcome.model}` on {outcome.provider.title()}, reasoning_effort={outcome.effort})",
             ""]
-    if res is None:
+    if outcome.status == "incomplete":
+        head.append(f"**reviewer_incomplete**: the model hit max_tokens={MAX_TOKENS} before finishing "
+                    f"({outcome.cost.output_tokens:,} output tokens). This is not an approval.")
+    elif res is None:
         head.append(f"Review failed: {outcome.error}")
     else:
         head.append(f"Verdict: **{res.verdict}** · {len(res.findings)} finding(s), {len(inline)} inline · "
@@ -291,7 +436,10 @@ def outcome_from_record(rec: dict) -> ReviewOutcome:
         cost=Cost(c.get("input_tokens", 0), c.get("cached_tokens", 0), c.get("output_tokens", 0),
                   c.get("reasoning_tokens", 0), c.get("usd")),
         latency_s=rec.get("latency_s", 0.0), attempts=rec.get("attempts", 1),
-        reasoning=rec.get("reasoning_content") or [], raw=rec.get("raw_content") or [], error=rec.get("error"))
+        reasoning=rec.get("reasoning_content") or [], raw=rec.get("raw_content") or [], error=rec.get("error"),
+        status=rec.get("status") or ("ok" if rec.get("result") else "failed"),
+        finish_reasons=rec.get("finish_reasons") or [], test_context=rec.get("test_context") or [],
+        version=rec.get("reviewer_version", 1))
 
 
 def latest_logged(paths: list[Path]) -> ReviewOutcome | None:
@@ -302,7 +450,7 @@ def latest_logged(paths: list[Path]) -> ReviewOutcome | None:
             continue
         for line in Path(p).read_text().splitlines():
             rec = json.loads(line)
-            if rec.get("event") == "review" and rec.get("result") and (best is None or rec["ts"] > best["ts"]):
+            if rec.get("event") == "review" and (best is None or rec["ts"] > best["ts"]):
                 best = rec
     return outcome_from_record(best) if best else None
 
@@ -331,14 +479,29 @@ def inputs_for_task(home: Path, task_id: str):
     return res, diff, guard_items, changelog
 
 
+def test_context_for(res, diff: str) -> tuple[str, list[str]]:
+    """covering_tests() for a LoopResult: base-commit sources read from its worktree."""
+    wt = res.worktree
+    prefix = "" if wt.project_rel in (".", "") else wt.project_rel.rstrip("/") + "/"
+
+    def base_source(rel: str) -> str | None:
+        p = subprocess.run(["git", "show", f"{wt.base}:{prefix}{rel}"], cwd=wt.path, capture_output=True, text=True)
+        return p.stdout if p.returncode == 0 else None
+
+    return covering_tests(res.blast_radius, diff, wt.project_rel, base_source)
+
+
 if __name__ == "__main__":
     tid = sys.argv[1]
     prov = sys.argv[sys.argv.index("--provider") + 1] if "--provider" in sys.argv else "baseten"
     eff = sys.argv[sys.argv.index("--effort") + 1] if "--effort" in sys.argv else DEFAULT_EFFORT
     home = Path(__file__).resolve().parents[1]
     res, d, g, cl = inputs_for_task(home, tid)
+    ctx = test_context_for(res, d)
+    print(f"test context: {len(ctx[1])} tests, {ctx[0].count(chr(10)) + 1} lines: {ctx[1]}", file=sys.stderr)
     o = review(d, g, res.spec, cl, provider=prov, effort=eff, log_path=home / ".driftzero" / "runs" / f"{tid}.review.jsonl",
-               task_id=tid)
-    print(json.dumps({"verdict": o.result.verdict if o.result else None, "error": o.error, "attempts": o.attempts,
+               task_id=tid, test_context=ctx)
+    print(json.dumps({"verdict": o.verdict_label, "status": o.status, "finish_reasons": o.finish_reasons,
+                      "error": o.error, "attempts": o.attempts,
                       "latency_s": o.latency_s, "cost": o.cost.as_dict(),
                       "findings": [f.model_dump() for f in (o.result.findings if o.result else [])]}, indent=2))

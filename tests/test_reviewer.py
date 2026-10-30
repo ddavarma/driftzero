@@ -37,7 +37,8 @@ GOOD = {"verdict": "comment", "findings": [{
 
 
 class FakeChat:
-    def __init__(self, replies):
+    def __init__(self, replies, finish="stop"):
+        self.finish = finish
         self.replies = list(replies)
         self.calls = []
         self.chat = SimpleNamespace(completions=self)
@@ -49,7 +50,7 @@ class FakeChat:
                                 prompt_tokens_details=SimpleNamespace(cached_tokens=2000),
                                 completion_tokens_details=SimpleNamespace(reasoning_tokens=3900))
         msg = SimpleNamespace(content=content, reasoning_content="thinking about " + str(len(self.calls)))
-        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")], usage=usage)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason=self.finish)], usage=usage)
 
 
 def test_review_parses_json_mode_and_logs_reasoning(tmp_path):
@@ -58,7 +59,7 @@ def test_review_parses_json_mode_and_logs_reasoning(tmp_path):
     out = reviewer.review(DIFF, ["[stale_test_name] tests/x.py::test_v1"], SPEC, "changelog text", client=client,
                           log_path=log, task_id="t")
     kw = client.calls[0]
-    assert kw["model"] == "meta-models/muse-spark-open-1026" and kw["max_tokens"] == 8000
+    assert kw["model"] == "meta-models/muse-spark-open-1026" and kw["max_tokens"] == 24000
     assert kw["response_format"] == {"type": "json_object"} and kw["extra_body"] == {"reasoning_effort": "high"}
     system, user = kw["messages"][0]["content"], kw["messages"][1]["content"]
     assert "ALREADY checks the test files" in system and '"verdict"' in system
@@ -127,3 +128,44 @@ def test_post_review_inline_body_and_strict(monkeypatch):
     res = reviewer.post_review("o/r", 7, out, DIFF, strict=True)
     assert [p["event"] for p in sent] == ["REQUEST_CHANGES", "COMMENT"] and res["event"] == "COMMENT"
     assert "Would request changes" in sent[1]["body"]
+
+
+def test_length_is_incomplete_not_approve(tmp_path):
+    client = FakeChat([""], finish="length")
+    log = tmp_path / "r.jsonl"
+    out = reviewer.review(DIFF, [], SPEC, None, client=client, log_path=log)
+    assert out.status == "incomplete" and out.verdict_label == "reviewer_incomplete" and out.attempts == 1
+    rec = json.loads(log.read_text())
+    assert rec["status"] == "incomplete" and rec["verdict"] == "reviewer_incomplete" and rec["max_tokens"] == 24000
+    # even a parseable "approve" cut off by the budget is not an approval
+    cut = reviewer.review(DIFF, [], SPEC, None, client=FakeChat(['{"verdict": "approve", "findings": []}'], finish="length"))
+    assert cut.verdict_label == "reviewer_incomplete"
+    assert reviewer.outcome_from_record(rec).status == "incomplete"
+
+
+def test_epistemics_rule_and_test_context_section():
+    assert "CLAIMS, not\nfacts" in reviewer.SYSTEM or "CLAIMS, not facts" in reviewer.SYSTEM.replace("\n", " ")
+    assert "unsupported justification is itself a finding" in reviewer.SYSTEM.replace("\n", " ")
+    user = reviewer.build_user_prompt(DIFF, [], SPEC, None, "def test_x():\n    assert f() == 1.0")
+    assert "## Unchanged tests exercising modified code" in user and "def test_x()" in user
+    assert user.index("## Diff under review") < user.index("## Unchanged tests")
+
+
+def test_covering_tests_on_real_repair():
+    from driftzero.blast_radius import analyze
+
+    diff = (Path(__file__).resolve().parents[1] / "docs" / "runs" / "20261030-014828-02a484.diff").read_text()
+    br = analyze(BENCH, SPEC)
+    text, names = reviewer.covering_tests(br, diff, "benchmarks/robotics_telemetry_drift",
+                                          lambda rel: (BENCH / rel).read_text())
+    # unchanged tests only: the ones Muse edited are already in the diff
+    assert "tests/test_client.py::test_client_hits_v1_paths" not in names
+    assert "tests/test_alerts.py::test_fleet_summary" not in names
+    assert "tests/charging" not in " ".join(names)
+    # exact numeric equality first
+    assert names[0] == "tests/test_client.py::test_parse_frame_reads_pose_and_noise"
+    assert "assert frame.pose.yaw == 87.0" in text
+    assert text.count("\n") + 1 <= reviewer.TEST_CONTEXT_MAX_LINES
+    small, few = reviewer.covering_tests(br, diff, "benchmarks/robotics_telemetry_drift",
+                                         lambda rel: (BENCH / rel).read_text(), cap=12)
+    assert 0 < len(few) < len(names) and small.count("\n") + 1 <= 12

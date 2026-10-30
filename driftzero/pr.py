@@ -161,8 +161,13 @@ def _findings(res: LoopResult) -> list[str]:
                         f"{_md(f.explanation)} *Fix:* {_md(f.suggested_fix)} |")
     out = ["| source | severity | kind | where | finding |", "|---|---|---|---|---|", *rows] if rows else []
     if rv is not None:
-        status = (f"verdict **{rv.result.verdict}**, {len(rv.result.findings)} finding(s)" if rv.result
-                  else f"review failed ({_md(rv.error)})")
+        if rv.status == "incomplete":
+            status = ("**reviewer_incomplete**: ran out of its token budget before finishing; this is not an "
+                      "approval" + (f" (partial findings: {len(rv.result.findings)})" if rv.result else ""))
+        elif rv.result:
+            status = f"verdict **{rv.result.verdict}**, {len(rv.result.findings)} finding(s)"
+        else:
+            status = f"review failed ({_md(rv.error)})"
         out += ["", f"{REVIEWER_LABEL}: `{rv.model}` on {rv.provider.title()}, reasoning_effort={rv.effort}: {status}; "
                 f"${rv.cost.usd or 0:.4f}, {rv.latency_s:.0f} s. It is told what the guard checks and reviews what "
                 "the guard cannot see (test-shaped library code, precision, unrequested behaviour changes, "
@@ -473,7 +478,8 @@ def review_pr(res: LoopResult, pr_url: str, *, provider: str = "baseten", effort
             changelog = logs[0].read_text() if logs else None
         outcome = reviewer.review(diff, [str(f) for f in (res.guard.review_items if res.guard else [])], res.spec,
                                   changelog, provider=provider, effort=effort or reviewer.DEFAULT_EFFORT,
-                                  log_path=log_path or res.log_path, task_id=res.task_id)
+                                  log_path=log_path or res.log_path, task_id=res.task_id,
+                                  test_context=reviewer.test_context_for(res, diff))
     res.review = outcome
     slug = res.target_slug or reviewer.repo_slug(wt.root)
     number = pr_url.rstrip("/").rsplit("/", 1)[-1]
