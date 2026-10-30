@@ -89,7 +89,7 @@ Benchmark: `fleet-telemetry-v1`, a robot fleet telemetry client. v1 → v2 drift
 | fleet-telemetry-v1 PR #1 | from changelog, separate target repo | differ matched hand-written spec exactly ($0.024), 33 steps, 25/25 + 7/7, $0.59, 193 s |
 | fleet-telemetry-v1 PR #2 | `--review-fix`, reviewer v2 | reviewer approved, no fix iteration, 260 s, $0.67 |
 | fleet-telemetry-v1 PR #3 | `--review-fix`, reviewer v2.1 | 6 findings ≥0.5, 4 triggered a fix pass; Muse justified all 4 (repair rule: keep Python API compatible) and changed nothing, 300 s, $0.84 |
-| fleet-telemetry-v1 PR #5 | `--review-fix`, shipped reviewer (v2.1 + filter) | 1 iteration, 24 steps, 23/23 + 8/8 (health hold-out passed first time). Review: approve; 4 findings all below 0.5: the required-fields-with-defaults issue (present in this diff) at 0.40, and 3 `dead_compat_code` findings tagged policy-required. No fix pass. Differ $0.024, review $0.052, total $0.56, 234 s |
+| fleet-telemetry-v1 PR #5 | `--review-fix`, shipped reviewer (v2.1 + filter) | 1 iteration, 24 steps, 23/23 + 8/8 (health hold-out passed first time). Review: approve; 4 findings all below 0.5: the required-fields-with-defaults issue (present in this diff) at 0.40, and 3 `dead_compat_code` findings tagged policy-required. The default trigger did not fire. Then, manually, `driftzero review-fix --review-fix-min-severity low --review-fix-min-confidence 0.3` (both lowered thresholds stated in the PR body): only the untagged defaults finding qualified; Muse made `covariance` and `health` required (commit `c9d2e8e`, 2 hunks in `models.py`, 13 steps), guard ok, Modal re-verify 23/23 + 8/8, second review approve with 7 findings all below 0.5 and none about the defaults. Run $0.56 (differ $0.024, review $0.052) + fix pass $0.23 + second review $0.056 = $0.85; 234 s + 99 s |
 | fleet-telemetry-v1 PR #4 | `--review-fix`, reviewer v2.2, 8 hold-outs | 2 iterations (17 + 11 steps). Iteration 1 passed its own 22 tests but failed the new health-range hold-out (7/8); the retry prompt carried only the redacted line `test_health_outside_documented_range_is_rejected: Failed: DID NOT RAISE TelemetryParseError`, and iteration 2 added the 0..1 check (22/22, 8/8). Review: approve, no findings (this diff has neither known smell), no fix pass. Differ $0.026, total $0.68, 234 s |
 
 Repeatable behaviours observed across runs: Muse rounds derived Euler angles to 1e-3 degrees so an unchanged exact-equality test still passes (three runs: the stage 4 repair, DriftZero PR #1, fleet-telemetry-v1 PR #2), and in three other runs loosened `== 87.0` to `pytest.approx` instead (fleet-telemetry-v1 PR #1, #3, #4). The guard reports every loosening for human review; it cannot see the rounding, which lives in library code.
@@ -111,7 +111,7 @@ PR #4 is the clearest case for hold-outs: the agent's own suite was green, the h
 - The guard catches structural test tampering, not library code shaped to satisfy a test. The shipped reviewer (v2.1 + filter) catches the rounding at ≥0.6 in 5 of 6 eval runs, but its confidence is uncalibrated: on PR #5 it rated a real issue 0.40 and approved. A human still has to read the "Possible issues" table.
 - Hold-outs are hand-written per target (`benchmarks/targets.json`); this target has 8. A new repo needs new hold-outs.
 - Muse's `git status` fails inside its sandbox on cloned targets (exit 128); harmless, DriftZero commits outside it.
-- The review-fix commit-and-second-review path has run only in offline tests; no live run has produced a fix commit yet.
+- The review-fix path has produced one live fix commit (PR #5, `c9d2e8e`), and only with both trigger thresholds lowered by hand (severity low, confidence 0.3). At the defaults (medium, 0.6) the shipped reviewer has not yet triggered a committed fix.
 - Reviewer line numbers were off by 1–12 until anchoring on quoted evidence was added.
 - Cost per full run $0.37–$0.84 at the rates in `telemetry.py` (as of 2026-09); 86–96% of repair input tokens are cached.
 
@@ -127,4 +127,4 @@ Done since the first draft: reviewer v2.2 and v2.3 (policy in the prompt) evalua
 
 1. Optional, high value: run on a public Python repo you did not write.
 2. Terminal recording of one full run; video script written from real numbers only.
-3. Not yet seen live: a review-fix pass that commits a change and gets a second review.
+3. Resolved: a review-fix pass that commits a change and gets a second review happened live on PR #5 (manual run at lowered thresholds; disclosed in the PR). Not yet seen: the same at the default thresholds.

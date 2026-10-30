@@ -115,7 +115,7 @@ only from the v2 spec and changelog. They are never shown to the agent, excluded
 
 | run | iterations | guard | agent suite | hold-out | sandbox | cost | wall time |
 |---|---|---|---|---|---|---|---|
-| [changelog → PR #5 on fleet-telemetry-v1, `--review-fix`, shipped reviewer (v2.1 + filter)](https://github.com/ddavarma/fleet-telemetry-v1/pull/5) (`20261030-161858-a70fa1`) | 1 | ok, 14 review items | 23/23 | 8/8 | Modal, 3.7 s | $0.56 (differ $0.024, review $0.052) | 234 s end to end |
+| [changelog → PR #5 on fleet-telemetry-v1, `--review-fix`, shipped reviewer (v2.1 + filter)](https://github.com/ddavarma/fleet-telemetry-v1/pull/5) (`20261030-161858-a70fa1`) | 1, then a manual review-fix pass at lowered thresholds (committed `c9d2e8e`) | ok, 14 review items (both passes) | 23/23, re-verify 23/23 | 8/8, re-verify 8/8 | Modal, 3.7 s + 5.4 s | $0.85 ($0.56 run + $0.23 fix pass + $0.056 second review) | 234 s + 99 s for the fix pass |
 | [changelog → PR #4 on fleet-telemetry-v1, `--review-fix`, reviewer v2.2](https://github.com/ddavarma/fleet-telemetry-v1/pull/4) (`20261030-155223-26855b`) | **2**: iteration 1 failed the new health-range hold-out (7/8), the redacted retry fixed it | ok, 13 review items | 22/22 | 8/8 | Modal, 4.5 s + 5.2 s | $0.68 (differ $0.026, review $0.040) | 234 s end to end |
 | [changelog → PR #3 on fleet-telemetry-v1, `--review-fix`, reviewer v2.1](https://github.com/ddavarma/fleet-telemetry-v1/pull/3) (`20261030-043600-9b46d7`) | 1 + 1 review-fix (no code change: all 4 findings justified) | ok, 15 review items | 23/23, re-verify 23/23 | 7/7, re-verify 7/7 | Modal, 4.7 s + 6.6 s | $0.84 (differ $0.019, review $0.065, fix pass $0.23) | 300 s end to end |
 | [changelog → PR #2 on fleet-telemetry-v1, `--review-fix`](https://github.com/ddavarma/fleet-telemetry-v1/pull/2) (`20261030-041743-ffdf04`) | 1 (+0: reviewer approved, no fix pass) | ok, 14 review items | 25/25 | 7/7 | Modal, 3.8 s | $0.67 (differ $0.026, review $0.068) | 260 s end to end |
@@ -191,14 +191,17 @@ Logs: [`docs/runs/`](docs/runs/). The end-to-end explanation, with every number 
   static, with no type inference: method calls resolve by unique method name, and dynamic access (`getattr`,
   `**kwargs` payload plumbing) is invisible.
 - **The shipped reviewer under-rates a real issue on a fresh diff.** On fleet-telemetry-v1 PR #5 it reported the
-  required-fields-with-defaults issue (which is present) at 0.40, so the verdict was `approve` and no fix pass ran; its
-  other three findings were `policy-required`. A review-fix pass that commits a change and gets a second review has
-  still not happened live.
+  required-fields-with-defaults issue (which is present) at 0.40, so the verdict was `approve` and the default trigger
+  (severity ≥ medium, confidence ≥ 0.6) did not fire; its other three findings were `policy-required`. The fix path
+  was then run manually with both thresholds lowered (`driftzero review-fix --review-fix-min-severity low
+  --review-fix-min-confidence 0.3`, disclosed in the PR): Muse made the two fields required (commit `c9d2e8e`, two
+  hunks in `models.py`), re-verified 23/23 and 8/8, and the second review approved without the defaults finding.
+  That is the only live fix commit so far, and it needed lowered thresholds.
 - **The repair brief and the reviewer disagree on compatibility.** In the live `--review-fix` run (fleet-telemetry-v1
   PR #3) the trigger fired on 4 findings (confidence 0.70–0.82), and Muse ran the extra iteration, re-verified (23/23,
   7/7), and **changed nothing**: it justified all four by citing the repair prompt's own rule to keep the Python API
   source-compatible, which is exactly what the reviewer flags as dead compat code. Nothing was pushed and no second
-  review ran. The commit-and-re-review half of the fix path is still covered only by offline tests.
+  review ran.
 - **One scenario.** Everything is proven on one API change in one domain. The differ has only been checked against
   that one changelog; a second scenario (e.g. float dollars → integer cents) is not built yet.
 - **Hold-outs need a mapping.** A remote target gets hold-out tests only if `benchmarks/targets.json` lists it.
