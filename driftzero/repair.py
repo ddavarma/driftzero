@@ -89,6 +89,23 @@ def create_worktree(repo: str | Path, task_id: str) -> Worktree:
     return Worktree(root=root, path=path, branch=branch, base=base, project_rel=rel)
 
 
+def hide_in_worktree(wt: Worktree, rel_dirs: list[str]) -> list[str]:
+    """Remove directories (e.g. hold-out tests) from the worktree checkout without recording a deletion.
+
+    Tracked files get `skip-worktree`, so `git status`/`git diff` (and so collect_diff) stay clean
+    and the agent cannot read them. Returns the hidden file paths.
+    """
+    hidden: list[str] = []
+    for rel in rel_dirs:
+        files = _git(wt.path, "ls-files", "-z", "--", rel).split("\0")
+        files = [f for f in files if f]
+        if files:
+            _git(wt.path, "update-index", "--skip-worktree", "--", *files)
+            hidden += files
+        shutil.rmtree(wt.path / rel, ignore_errors=True)
+    return hidden
+
+
 def remove_worktree(wt: Worktree, delete_branch: bool = True) -> None:
     subprocess.run(["git", "worktree", "remove", "--force", str(wt.path)], cwd=wt.root, capture_output=True)
     if wt.path.exists():
@@ -171,7 +188,8 @@ def write_repair_prompt(
         "6. Uncertainty: derive the scalar position sigma as `sqrt(trace(P_pos) / 3)` where `P_pos = covariance[0:3][0:3]`, "
         "so isotropic fixtures keep the same fusion weights and noise alerts as before. Validate the covariance shape (6x6).",
         f"7. Before finishing, run `{test_cmd}`. Every test must pass. If something fails, fix the code (not the test) "
-        "and run it again. numpy and pytest are already installed in that interpreter; do not pip install anything.",
+        "and run it again. numpy and pytest are already installed in that interpreter; do not pip install anything. "
+        "Never pipe pytest through `tail` or `head` (the pipe hides pytest's exit code); run `python -m pytest -q` directly.",
         "8. Do not commit, create branches, or touch git state; leave your changes in the working tree.",
         "9. Your final answer must be the JSON object required by the output schema: `tests_run` and "
         "`tests_passed` come from your last pytest run, and `files_changed` lists every file you modified or created.",
