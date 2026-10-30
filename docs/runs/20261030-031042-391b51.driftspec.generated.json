@@ -1,0 +1,113 @@
+{
+  "api": "Fleet Telemetry API",
+  "from_version": "v1",
+  "to_version": "v2",
+  "summary": "Fleet Telemetry API v2 moves all endpoints from /v1/... to /v2/... and bumps FleetSnapshot.api_version to \"v2\" (v1 deprecated, shut off 2026-12-01). Orientation changes from Euler degrees (intrinsic Z-Y-X) to unit quaternion (Hamilton, scalar last) and scalar noise (isotropic 1-sigma, metres) is replaced by 6x6 pose covariance. Adds required health (0..1, alert below 0.5).",
+  "endpoints_renamed": [
+    {
+      "method": "GET",
+      "old": "/v1/fleet/telemetry",
+      "new": "/v2/fleet/telemetry",
+      "notes": "All endpoints move from /v1/... to /v2/...; v1 endpoints are deprecated and will be shut off on 2026-12-01."
+    },
+    {
+      "method": "GET",
+      "old": "/v1/robots/{robot_id}/telemetry/latest",
+      "new": "/v2/robots/{robot_id}/telemetry/latest",
+      "notes": "All endpoints move from /v1/... to /v2/...; v1 endpoints are deprecated and will be shut off on 2026-12-01."
+    }
+  ],
+  "fields_removed": [
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "noise",
+      "old_type": "number",
+      "replacement": "covariance",
+      "notes": "Removed isotropic 1-sigma position uncertainty, metres. Replaced by 6x6 covariance. Scalar equivalent sigma = sqrt(trace(P_pos)/3); anything that weighted by 1 / noise² should weight by the inverse of the position covariance block."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.pitch",
+      "old_type": "number",
+      "replacement": "orientation.{qx,qy,qz,qw}",
+      "notes": "Removed degrees, intrinsic Z-Y-X, part of body-to-map rotation R = Rz(yaw)·Ry(pitch)·Rx(roll). Replaced by unit quaternion, Hamilton convention, scalar last; q and -q are same rotation and qw may be negative."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.roll",
+      "old_type": "number",
+      "replacement": "orientation.{qx,qy,qz,qw}",
+      "notes": "Removed degrees, intrinsic Z-Y-X, part of body-to-map rotation R = Rz(yaw)·Ry(pitch)·Rx(roll). Replaced by unit quaternion, Hamilton convention, scalar last; q and -q are same rotation and qw may be negative."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.yaw",
+      "old_type": "number",
+      "replacement": "orientation.{qx,qy,qz,qw}",
+      "notes": "Removed degrees, intrinsic Z-Y-X, part of body-to-map rotation R = Rz(yaw)·Ry(pitch)·Rx(roll). Replaced by unit quaternion, Hamilton convention, scalar last; q and -q are same rotation and qw may be negative. If you still need heading, use yaw = atan2(2(qw·qz + qx·qy), 1 − 2(qy² + qz²)); do not round-trip through Euler for tilt."
+    }
+  ],
+  "fields_added": [
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "covariance",
+      "type": "array[array[number]]",
+      "required": true,
+      "notes": "Added 6x6 symmetric pose covariance as nested row-major arrays. Variable order x, y, z (m) then rotation about X, Y, Z (rad). The position block covariance[0:3][0:3] is in m². Migration: anything that weighted by 1 / noise² should weight by the inverse of the position covariance block. Scalar equivalent sigma = sqrt(trace(P_pos)/3)."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "health",
+      "type": "number",
+      "required": true,
+      "notes": "Added required health (0..1): composite localisation/drive health from the on-robot monitor. 1 = nominal; values below 0.5 mean the robot should be serviced. Ops dashboards should raise a health alert below 0.5."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.qw",
+      "type": "number",
+      "required": true,
+      "notes": "Added unit quaternion, Hamilton convention, scalar last, describing the same body-to-map rotation R = Rz(yaw)·Ry(pitch)·Rx(roll). Server does not canonicalise sign: q and -q are the same rotation and qw may be negative. If heading needed: yaw = atan2(2(qw·qz + qx·qy), 1 − 2(qy² + qz²))."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.qx",
+      "type": "number",
+      "required": true,
+      "notes": "Added unit quaternion, Hamilton convention, scalar last, describing the same body-to-map rotation R = Rz(yaw)·Ry(pitch)·Rx(roll). Server does not canonicalise sign: q and -q are the same rotation and qw may be negative. If heading needed: yaw = atan2(2(qw·qz + qx·qy), 1 − 2(qy² + qz²))."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.qy",
+      "type": "number",
+      "required": true,
+      "notes": "Added unit quaternion, Hamilton convention, scalar last, describing the same body-to-map rotation R = Rz(yaw)·Ry(pitch)·Rx(roll). Server does not canonicalise sign: q and -q are the same rotation and qw may be negative. If heading needed: yaw = atan2(2(qw·qz + qx·qy), 1 − 2(qy² + qz²))."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.qz",
+      "type": "number",
+      "required": true,
+      "notes": "Added unit quaternion, Hamilton convention, scalar last, describing the same body-to-map rotation R = Rz(yaw)·Ry(pitch)·Rx(roll). Server does not canonicalise sign: q and -q are the same rotation and qw may be negative. If heading needed: yaw = atan2(2(qw·qz + qx·qy), 1 − 2(qy² + qz²))."
+    }
+  ],
+  "fields_renamed": [],
+  "type_changes": [
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation",
+      "old_type": "EulerOrientation",
+      "new_type": "Quaternion",
+      "notes": "EulerOrientation (degrees, intrinsic Z-Y-X) -> Quaternion (unit quaternion, Hamilton convention, scalar last) describing same body-to-map rotation R = Rz(yaw)·Ry(pitch)·Rx(roll); q and -q same rotation, qw may be negative."
+    }
+  ],
+  "value_changes": [
+    {
+      "schema_name": "FleetSnapshot",
+      "path": "api_version",
+      "old": "v1",
+      "new": "v2",
+      "notes": "FleetSnapshot.api_version is now \"v2\" with move to /v2/... endpoints."
+    }
+  ]
+}

@@ -1,0 +1,828 @@
+diff --git a/README.md b/README.md
+index 1bd44f9..82a797a 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,4 @@
+-# fleet-telemetry (v1)
++# fleet-telemetry (v2)
+ 
+ **This is a demo target for [DriftZero](https://github.com/ddavarma/driftzero)**, an autonomous API-drift repair
+ agent built for the Meta Global AI Developer Hackathon (Oct–Nov 2026). It is not a maintained library.
+diff --git a/fleet_telemetry/__init__.py b/fleet_telemetry/__init__.py
+index a4f59d6..16816b2 100644
+--- a/fleet_telemetry/__init__.py
++++ b/fleet_telemetry/__init__.py
+@@ -1,4 +1,4 @@
+-"""Client library for the fleet telemetry API (v1)."""
++"""Client library for the fleet telemetry API (v2)."""
+ from fleet_telemetry.client import FleetClient, TelemetryParseError, parse_batch, parse_frame
+ from fleet_telemetry.models import Pose, TelemetryFrame
+ 
+diff --git a/fleet_telemetry/alerts.py b/fleet_telemetry/alerts.py
+index f3b7fbe..a0e97e4 100644
+--- a/fleet_telemetry/alerts.py
++++ b/fleet_telemetry/alerts.py
+@@ -9,12 +9,13 @@ from fleet_telemetry.orientation import tilt_deg
+ MAX_TILT_DEG = 15.0
+ MAX_NOISE_M = 0.25
+ MIN_BATTERY = 0.15
++MIN_HEALTH = 0.5
+ 
+ 
+ @dataclass(frozen=True)
+ class Alert:
+     robot_id: str
+-    kind: str  # "tilt" | "noisy" | "battery"
++    kind: str  # "tilt" | "noisy" | "battery" | "health"
+     message: str
+ 
+ 
+@@ -23,6 +24,7 @@ def check_frame(
+     max_tilt_deg: float = MAX_TILT_DEG,
+     max_noise_m: float = MAX_NOISE_M,
+     min_battery: float = MIN_BATTERY,
++    min_health: float = MIN_HEALTH,
+ ) -> list[Alert]:
+     alerts: list[Alert] = []
+     tilt = tilt_deg(frame.pose)
+@@ -32,4 +34,6 @@ def check_frame(
+         alerts.append(Alert(frame.robot_id, "noisy", f"position noise {frame.noise:.2f} m exceeds {max_noise_m:.2f}"))
+     if frame.battery < min_battery:
+         alerts.append(Alert(frame.robot_id, "battery", f"battery {frame.battery:.0%} below {min_battery:.0%}"))
++    if frame.health < min_health:
++        alerts.append(Alert(frame.robot_id, "health", f"health {frame.health:.2f} below {min_health:.2f}"))
+     return alerts
+diff --git a/fleet_telemetry/client.py b/fleet_telemetry/client.py
+index a600bb4..3aefc3f 100644
+--- a/fleet_telemetry/client.py
++++ b/fleet_telemetry/client.py
+@@ -1,41 +1,71 @@
+-"""Parse fleet telemetry API v1 payloads into domain objects."""
++"""Parse fleet telemetry API v2 payloads into domain objects."""
+ from __future__ import annotations
+ 
++import math
+ from typing import Any, Callable
+ 
+ from fleet_telemetry.models import Pose, TelemetryFrame
++from fleet_telemetry.orientation import euler_from_quaternion, normalize_quaternion
+ 
+-API_VERSION = "v1"
+-BASE_PATH = "/v1"
++API_VERSION = "v2"
++BASE_PATH = "/v2"
+ 
+ Transport = Callable[[str], dict[str, Any]]
+ 
+ 
+ class TelemetryParseError(ValueError):
+-    """Raised when a payload does not match the v1 schema."""
++    """Raised when a payload does not match the v2 schema."""
++
++
++def _parse_covariance(raw: Any) -> tuple[tuple[float, ...], ...]:
++    try:
++        rows = tuple(tuple(float(v) for v in row) for row in raw)
++    except TypeError as exc:
++        raise TelemetryParseError(f"covariance must be a 6x6 nested array: {exc}") from exc
++    if len(rows) != 6 or any(len(row) != 6 for row in rows):
++        raise TelemetryParseError(
++            f"covariance must be a 6x6 nested array, got {[len(r) for r in rows]}"
++        )
++    return rows
+ 
+ 
+ def parse_frame(payload: dict[str, Any]) -> TelemetryFrame:
+     try:
+         pos = payload["position"]
+         ori = payload["orientation"]
++        qx, qy, qz, qw = normalize_quaternion(
++            float(ori["qx"]),
++            float(ori["qy"]),
++            float(ori["qz"]),
++            float(ori["qw"]),
++        )
++        covariance = _parse_covariance(payload["covariance"])
++        health = float(payload["health"])
++        trace_pos = covariance[0][0] + covariance[1][1] + covariance[2][2]
++        noise = math.sqrt(trace_pos / 3.0)
++        if noise <= 0:
++            raise TelemetryParseError(f"noise must be positive, got {noise}")
++        roll, pitch, yaw = euler_from_quaternion(qx, qy, qz, qw)
+         pose = Pose(
+             x=float(pos["x"]),
+             y=float(pos["y"]),
+             z=float(pos["z"]),
+-            roll=float(ori["roll"]),
+-            pitch=float(ori["pitch"]),
+-            yaw=float(ori["yaw"]),
++            roll=roll,
++            pitch=pitch,
++            yaw=yaw,
++            qx=qx,
++            qy=qy,
++            qz=qz,
++            qw=qw,
+         )
+-        noise = float(payload["noise"])
+-        if noise <= 0:
+-            raise TelemetryParseError(f"noise must be positive, got {noise}")
+         return TelemetryFrame(
+             robot_id=str(payload["robot_id"]),
+             timestamp=float(payload["timestamp"]),
+             pose=pose,
+             noise=noise,
+             battery=float(payload["battery"]),
++            covariance=covariance,
++            health=health,
+         )
+     except KeyError as exc:
+         raise TelemetryParseError(f"missing field {exc.args[0]!r}") from exc
+diff --git a/fleet_telemetry/fusion.py b/fleet_telemetry/fusion.py
+index 253e49a..d2a797a 100644
+--- a/fleet_telemetry/fusion.py
++++ b/fleet_telemetry/fusion.py
+@@ -1,6 +1,7 @@
+-"""Combine observations from several frames using the per-frame noise estimate."""
++"""Combine observations from several frames using the per-frame covariance."""
+ from __future__ import annotations
+ 
++import math
+ from typing import Sequence
+ 
+ import numpy as np
+@@ -8,20 +9,38 @@ import numpy as np
+ from fleet_telemetry.models import TelemetryFrame
+ 
+ 
++def position_covariance(frame: TelemetryFrame) -> np.ndarray:
++    """3x3 position covariance block (m^2), i.e. covariance[0:3][0:3]."""
++    cov = np.asarray(frame.covariance, dtype=float)
++    return cov[0:3, 0:3]
++
++
+ def position_variance(frame: TelemetryFrame) -> float:
+-    """Isotropic position variance (m^2) implied by the scalar noise sigma."""
+-    return frame.noise**2
++    """Scalar position variance (m^2): trace of the position block over 3.
++
++    For isotropic covariances this equals the old scalar ``noise`` squared,
++    so fusion weights and noise alerts are unchanged on such fixtures.
++    """
++    p = position_covariance(frame)
++    return float((p[0, 0] + p[1, 1] + p[2, 2]) / 3.0)
++
++
++def position_sigma(frame: TelemetryFrame) -> float:
++    """Scalar 1-sigma position uncertainty (m): sqrt(trace(P_pos) / 3)."""
++    return math.sqrt(position_variance(frame))
+ 
+ 
+ def fuse_positions(frames: Sequence[TelemetryFrame]) -> tuple[np.ndarray, float]:
+-    """Inverse-variance weighted position and the fused 1-sigma, e.g. for a
++    """Inverse-covariance weighted position and the fused 1-sigma, e.g. for a
+     landmark seen by several robots."""
+     if not frames:
+         raise ValueError("need at least one frame")
+-    weights = np.array([1.0 / position_variance(f) for f in frames])
++    precisions = [np.linalg.inv(position_covariance(f)) for f in frames]
+     points = np.array([[f.pose.x, f.pose.y, f.pose.z] for f in frames])
+-    fused = (weights[:, None] * points).sum(axis=0) / weights.sum()
+-    sigma = float(np.sqrt(1.0 / weights.sum()))
++    total = sum(precisions)
++    fused = np.linalg.solve(total, sum(p @ x for p, x in zip(precisions, points)))
++    fused_cov = np.linalg.inv(total)
++    sigma = float(math.sqrt(np.trace(fused_cov) / 3.0))
+     return fused, sigma
+ 
+ 
+diff --git a/fleet_telemetry/models.py b/fleet_telemetry/models.py
+index ec3186b..a1d72cc 100644
+--- a/fleet_telemetry/models.py
++++ b/fleet_telemetry/models.py
+@@ -1,23 +1,54 @@
+-"""Domain types for robot telemetry, mirroring the v1 wire format."""
++"""Domain types for robot telemetry, mirroring the v2 wire format."""
+ from __future__ import annotations
+ 
+ from dataclasses import dataclass
++from typing import Optional
+ 
+ 
+ @dataclass(frozen=True)
+ class Pose:
+     """Robot pose in the fleet map frame.
+ 
+-    Position is in metres. Orientation is Euler angles in **degrees**,
+-    intrinsic Z-Y-X order (yaw, then pitch, then roll), as served by v1.
++    Position is in metres. Orientation is a unit quaternion (Hamilton
++    convention, scalar last) giving the body-to-map rotation, as served by
++    v2. ``qw`` may be negative: ``q`` and ``-q`` are the same rotation.
++
++    ``roll``/``pitch``/``yaw`` remain as derived Euler angles in degrees
++    (intrinsic Z-Y-X) for source compatibility. When the quaternion is not
++    given (legacy Euler construction), it is derived from the Euler angles.
+     """
+ 
+     x: float
+     y: float
+     z: float
+-    roll: float
+-    pitch: float
+-    yaw: float
++    roll: float = 0.0
++    pitch: float = 0.0
++    yaw: float = 0.0
++    qx: Optional[float] = None
++    qy: Optional[float] = None
++    qz: Optional[float] = None
++    qw: Optional[float] = None
++
++    def __post_init__(self) -> None:
++        # Deferred import: orientation imports Pose at module level.
++        from fleet_telemetry.orientation import normalize_quaternion, quaternion_from_euler
++
++        if self.qx is None or self.qy is None or self.qz is None or self.qw is None:
++            qx, qy, qz, qw = quaternion_from_euler(self.roll, self.pitch, self.yaw)
++        else:
++            qx, qy, qz, qw = normalize_quaternion(self.qx, self.qy, self.qz, self.qw)
++        object.__setattr__(self, "qx", qx)
++        object.__setattr__(self, "qy", qy)
++        object.__setattr__(self, "qz", qz)
++        object.__setattr__(self, "qw", qw)
++
++
++def _check_covariance_shape(covariance: tuple[tuple[float, ...], ...]) -> None:
++    if len(covariance) != 6 or any(len(row) != 6 for row in covariance):
++        raise ValueError(
++            "covariance must be a 6x6 nested array, "
++            f"got {[len(row) for row in covariance] if isinstance(covariance, tuple) else type(covariance)}"
++        )
+ 
+ 
+ @dataclass(frozen=True)
+@@ -25,5 +56,10 @@ class TelemetryFrame:
+     robot_id: str
+     timestamp: float  # unix seconds
+     pose: Pose
+-    noise: float  # scalar 1-sigma position noise, metres
++    noise: float  # scalar 1-sigma position noise, metres; derived as sqrt(trace(P_pos)/3)
+     battery: float  # state of charge, 0..1
++    covariance: tuple[tuple[float, ...], ...] = ((0.0,) * 6,) * 6  # 6x6 pose covariance, row-major
++    health: float = 1.0  # composite localisation/drive health, 0..1
++
++    def __post_init__(self) -> None:
++        _check_covariance_shape(self.covariance)
+diff --git a/fleet_telemetry/orientation.py b/fleet_telemetry/orientation.py
+index a71dcfd..626f1ef 100644
+--- a/fleet_telemetry/orientation.py
++++ b/fleet_telemetry/orientation.py
+@@ -1,26 +1,84 @@
+-"""Orientation math on v1 Euler poses (degrees, intrinsic Z-Y-X)."""
++"""Orientation math on v2 quaternion poses (Hamilton convention, scalar last)."""
+ from __future__ import annotations
+ 
++import math
++
+ import numpy as np
+ 
+ from fleet_telemetry.models import Pose
+ 
+ 
++def normalize_quaternion(qx: float, qy: float, qz: float, qw: float) -> tuple[float, float, float, float]:
++    """Scale (qx, qy, qz, qw) to unit length.
++
++    The server guarantees |q| == 1 within 1e-6, but callers must not assume
++    it; every consumer below normalises defensively. Sign is preserved as-is
++    (``qw`` may be negative): ``q`` and ``-q`` describe the same rotation and
++    all formulas used here are sign-invariant.
++    """
++    norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
++    if not math.isfinite(norm) or norm == 0.0:
++        raise ValueError(f"degenerate quaternion ({qx}, {qy}, {qz}, {qw})")
++    return (qx / norm, qy / norm, qz / norm, qw / norm)
++
++
++def _hamilton_product(
++    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
++) -> tuple[float, float, float, float]:
++    """Hamilton product a (x) b: rotation b applied first, then a."""
++    ax, ay, az, aw = a
++    bx, by, bz, bw = b
++    return (
++        aw * bx + ax * bw + ay * bz - az * by,
++        aw * by - ax * bz + ay * bw + az * bx,
++        aw * bz + ax * by - ay * bx + az * bw,
++        aw * bw - ax * bx - ay * by - az * bz,
++    )
++
++
++def quaternion_from_euler(roll_deg: float, pitch_deg: float, yaw_deg: float) -> tuple[float, float, float, float]:
++    """Unit quaternion for R = Rz(yaw) @ Ry(pitch) @ Rx(roll), angles in degrees."""
++    r, p, y = math.radians(roll_deg), math.radians(pitch_deg), math.radians(yaw_deg)
++    qx = (math.sin(r / 2.0), 0.0, 0.0, math.cos(r / 2.0))
++    qy = (0.0, math.sin(p / 2.0), 0.0, math.cos(p / 2.0))
++    qz = (0.0, 0.0, math.sin(y / 2.0), math.cos(y / 2.0))
++    return _hamilton_product(qz, _hamilton_product(qy, qx))
++
++
++def euler_from_quaternion(qx: float, qy: float, qz: float, qw: float) -> tuple[float, float, float]:
++    """Derived (roll, pitch, yaw) in degrees, intrinsic Z-Y-X, from a quaternion.
++
++    Kept for source compatibility only; orientation math never round-trips
++    through Euler (tilt comes straight from the rotation matrix).
++    """
++    qx, qy, qz, qw = normalize_quaternion(qx, qy, qz, qw)
++    roll = math.degrees(math.atan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy)))
++    pitch = math.degrees(math.asin(max(-1.0, min(1.0, 2.0 * (qw * qy - qz * qx)))))
++    yaw = math.degrees(math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz)))
++    return (roll, pitch, yaw)
++
++
+ def rotation_matrix(pose: Pose) -> np.ndarray:
+-    """Body-to-map rotation R = Rz(yaw) @ Ry(pitch) @ Rx(roll)."""
+-    r, p, y = np.radians([pose.roll, pose.pitch, pose.yaw])
+-    cr, sr = np.cos(r), np.sin(r)
+-    cp, sp = np.cos(p), np.sin(p)
+-    cy, sy = np.cos(y), np.sin(y)
+-    rz = np.array([[cy, -sy, 0.0], [sy, cy, 0.0], [0.0, 0.0, 1.0]])
+-    ry = np.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]])
+-    rx = np.array([[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]])
+-    return rz @ ry @ rx
++    """Body-to-map rotation built directly from the unit quaternion.
++
++    Quadratic in the quaternion components, hence identical for ``q`` and
++    ``-q``; the quaternion is normalised defensively first.
++    """
++    qx, qy, qz, qw = normalize_quaternion(pose.qx, pose.qy, pose.qz, pose.qw)
++    return np.array(
++        [
++            [1.0 - 2.0 * (qy * qy + qz * qz), 2.0 * (qx * qy - qz * qw), 2.0 * (qx * qz + qy * qw)],
++            [2.0 * (qx * qy + qz * qw), 1.0 - 2.0 * (qx * qx + qz * qz), 2.0 * (qy * qz - qx * qw)],
++            [2.0 * (qx * qz - qy * qw), 2.0 * (qy * qz + qx * qw), 1.0 - 2.0 * (qx * qx + qy * qy)],
++        ]
++    )
+ 
+ 
+ def heading_deg(pose: Pose) -> float:
+-    """Yaw normalised to [0, 360)."""
+-    return float(pose.yaw % 360.0)
++    """Yaw normalised to [0, 360), via the sign-invariant atan2 formula."""
++    qx, qy, qz, qw = normalize_quaternion(pose.qx, pose.qy, pose.qz, pose.qw)
++    yaw = math.degrees(math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz)))
++    return float(yaw % 360.0)
+ 
+ 
+ def heading_vector(pose: Pose) -> np.ndarray:
+@@ -31,6 +89,10 @@ def heading_vector(pose: Pose) -> np.ndarray:
+ 
+ 
+ def tilt_deg(pose: Pose) -> float:
+-    """Angle between the body z-axis and map z-axis, in degrees."""
++    """Angle between the body z-axis and map z-axis, in degrees.
++
++    Read straight from the quaternion rotation matrix; never round-trips
++    through Euler angles.
++    """
+     cos_tilt = np.clip(rotation_matrix(pose)[2, 2], -1.0, 1.0)
+     return float(np.degrees(np.arccos(cos_tilt)))
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 3a7384d..faa5703 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -10,7 +10,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
+ 
+ @pytest.fixture
+ def fleet_payload():
+-    return json.loads((FIXTURES / "fleet_v1.json").read_text())
++    return json.loads((FIXTURES / "fleet_v2.json").read_text())
+ 
+ 
+ @pytest.fixture
+diff --git a/tests/fixtures/fleet_v1.json b/tests/fixtures/fleet_v1.json
+deleted file mode 100644
+index c236013..0000000
+--- a/tests/fixtures/fleet_v1.json
++++ /dev/null
+@@ -1,14 +0,0 @@
+-{
+-  "api_version": "v1",
+-  "generated_at": 1793318400.0,
+-  "frames": [
+-    {"robot_id": "amr-01", "timestamp": 1793318399.2, "position": {"x": 12.4, "y": 3.1, "z": 0.0},
+-     "orientation": {"roll": 0.5, "pitch": -1.2, "yaw": 87.0}, "noise": 0.04, "battery": 0.82},
+-    {"robot_id": "amr-02", "timestamp": 1793318399.5, "position": {"x": 8.0, "y": -2.5, "z": 0.0},
+-     "orientation": {"roll": 2.0, "pitch": 18.5, "yaw": 181.0}, "noise": 0.06, "battery": 0.64},
+-    {"robot_id": "amr-03", "timestamp": 1793318399.7, "position": {"x": 15.2, "y": 7.7, "z": 0.1},
+-     "orientation": {"roll": -0.8, "pitch": 0.3, "yaw": 359.0}, "noise": 0.31, "battery": 0.91},
+-    {"robot_id": "amr-04", "timestamp": 1793318399.9, "position": {"x": 3.3, "y": 1.0, "z": 0.0},
+-     "orientation": {"roll": 0.0, "pitch": 0.0, "yaw": -45.0}, "noise": 0.05, "battery": 0.11}
+-  ]
+-}
+diff --git a/tests/fixtures/fleet_v2.json b/tests/fixtures/fleet_v2.json
+new file mode 100644
+index 0000000..3ea2189
+--- /dev/null
++++ b/tests/fixtures/fleet_v2.json
+@@ -0,0 +1,274 @@
++{
++  "api_version": "v2",
++  "generated_at": 1793318400.0,
++  "frames": [
++    {
++      "robot_id": "amr-01",
++      "timestamp": 1793318399.2,
++      "position": {
++        "x": 12.4,
++        "y": 3.1,
++        "z": 0.0
++      },
++      "orientation": {
++        "qx": 0.010373,
++        "qy": -0.004593,
++        "qz": 0.688343,
++        "qw": 0.725296
++      },
++      "covariance": [
++        [
++          0.0016,
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0016,
++          0.0,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0016,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05
++        ]
++      ],
++      "health": 0.97,
++      "battery": 0.82
++    },
++    {
++      "robot_id": "amr-02",
++      "timestamp": 1793318399.5,
++      "position": {
++        "x": 8.0,
++        "y": -2.5,
++        "z": 0.0
++      },
++      "orientation": {
++        "qx": -0.160862,
++        "qy": 0.015822,
++        "qz": 0.986833,
++        "qw": -0.005807
++      },
++      "covariance": [
++        [
++          0.0036,
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0036,
++          0.0,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0036,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05
++        ]
++      ],
++      "health": 0.58,
++      "battery": 0.64
++    },
++    {
++      "robot_id": "amr-03",
++      "timestamp": 1793318399.7,
++      "position": {
++        "x": 15.2,
++        "y": 7.7,
++        "z": 0.1
++      },
++      "orientation": {
++        "qx": 0.006958,
++        "qy": -0.002679,
++        "qz": 0.008708,
++        "qw": -0.999934
++      },
++      "covariance": [
++        [
++          0.0961,
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0961,
++          0.0,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0961,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05
++        ]
++      ],
++      "health": 0.41,
++      "battery": 0.91
++    },
++    {
++      "robot_id": "amr-04",
++      "timestamp": 1793318399.9,
++      "position": {
++        "x": 3.3,
++        "y": 1.0,
++        "z": 0.0
++      },
++      "orientation": {
++        "qx": 0.0,
++        "qy": 0.0,
++        "qz": -0.382683,
++        "qw": 0.92388
++      },
++      "covariance": [
++        [
++          0.0025,
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0025,
++          0.0,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0025,
++          0.0,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05,
++          0.0,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05,
++          0.0
++        ],
++        [
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          0.0,
++          7.615e-05
++        ]
++      ],
++      "health": 0.72,
++      "battery": 0.11
++    }
++  ]
++}
+diff --git a/tests/test_alerts.py b/tests/test_alerts.py
+index d1908cb..12adda3 100644
+--- a/tests/test_alerts.py
++++ b/tests/test_alerts.py
+@@ -11,7 +11,7 @@ def test_tilted_robot_raises_tilt_alert(frames):
+ 
+ 
+ def test_noisy_localisation_raises_noisy_alert(frames):
+-    assert kinds(frames["amr-03"]) == {"noisy"}
++    assert kinds(frames["amr-03"]) == {"noisy", "health"}
+ 
+ 
+ def test_low_battery_and_healthy_robot(frames):
+@@ -23,7 +23,8 @@ def test_fleet_summary(frames):
+     summary = summarize(list(frames.values()))
+     assert summary.n_robots == 4
+     assert summary.healthy_ids == ["amr-01"]
+-    assert len(summary.alerts) == 3
++    assert len(summary.alerts) == 4
+     text = format_summary(summary)
+     assert "ALERT [tilt] amr-02" in text
++    assert "ALERT [health] amr-03" in text
+     assert "amr-04  heading  315.0 deg" in text
+diff --git a/tests/test_client.py b/tests/test_client.py
+index eab512a..99c389e 100644
+--- a/tests/test_client.py
++++ b/tests/test_client.py
+@@ -7,9 +7,16 @@ def test_parse_frame_reads_pose_and_noise(fleet_payload):
+     frame = parse_frame(fleet_payload["frames"][0])
+     assert frame.robot_id == "amr-01"
+     assert (frame.pose.x, frame.pose.y, frame.pose.z) == (12.4, 3.1, 0.0)
+-    assert frame.pose.yaw == 87.0
++    assert frame.pose.yaw == pytest.approx(87.0)
+     assert frame.noise == 0.04
+     assert frame.battery == 0.82
++    assert (frame.pose.qx, frame.pose.qy, frame.pose.qz, frame.pose.qw) == pytest.approx(
++        (0.010373, -0.004593, 0.688343, 0.725296)
++    )
++    assert len(frame.covariance) == 6
++    assert all(len(row) == 6 for row in frame.covariance)
++    assert frame.covariance[0][0] == pytest.approx(0.0016)
++    assert frame.health == 0.97
+ 
+ 
+ def test_parse_batch_rejects_other_api_version(fleet_payload):
+@@ -30,4 +37,18 @@ def test_client_hits_v1_paths(client):
+     snapshot = client.fleet_snapshot()
+     assert frame.robot_id == "amr-03"
+     assert len(snapshot) == 4
+-    assert client.calls == ["/v1/robots/amr-03/telemetry/latest", "/v1/fleet/telemetry"]
++    assert client.calls == ["/v2/robots/amr-03/telemetry/latest", "/v2/fleet/telemetry"]
++
++
++def test_bad_covariance_shape_raises_parse_error(fleet_payload):
++    raw = dict(fleet_payload["frames"][0])
++    raw["covariance"] = [[0.0016] * 3] * 3
++    with pytest.raises(TelemetryParseError, match="covariance"):
++        parse_frame(raw)
++
++
++def test_missing_health_raises_parse_error(fleet_payload):
++    raw = dict(fleet_payload["frames"][0])
++    del raw["health"]
++    with pytest.raises(TelemetryParseError, match="health"):
++        parse_frame(raw)
+diff --git a/tests/test_health.py b/tests/test_health.py
+new file mode 100644
+index 0000000..102cc3a
+--- /dev/null
++++ b/tests/test_health.py
+@@ -0,0 +1,37 @@
++from dataclasses import replace
++
++import pytest
++
++from fleet_telemetry.alerts import MIN_HEALTH, check_frame
++
++
++def kinds(frame):
++    return {a.kind for a in check_frame(frame)}
++
++
++def test_low_health_raises_health_alert(frames):
++    assert MIN_HEALTH == 0.5
++    assert kinds(frames["amr-03"]) == {"noisy", "health"}
++    assert "health" not in kinds(frames["amr-01"])
++    assert "health" not in kinds(frames["amr-02"])
++    assert "health" not in kinds(frames["amr-04"])
++
++
++def test_health_threshold_is_overridable_like_other_thresholds(frames):
++    frame = frames["amr-03"]
++    assert check_frame(frame, min_health=0.99)[-1].kind == "health"
++    assert "health" not in {a.kind for a in check_frame(frame, min_health=0.1)}
++
++
++def test_health_carried_on_parsed_frame(fleet_payload):
++    from fleet_telemetry.client import parse_frame
++
++    by_id = {f["robot_id"]: f for f in fleet_payload["frames"]}
++    assert parse_frame(by_id["amr-01"]).health == 0.97
++    assert parse_frame(by_id["amr-03"]).health == 0.41
++
++
++def test_health_at_threshold_does_not_alert(frames):
++    frame = replace(frames["amr-01"], health=0.5)
++    assert "health" not in kinds(frame)
++    assert "health" in kinds(replace(frame, health=0.499))
+diff --git a/tests/test_orientation.py b/tests/test_orientation.py
+index 42953c6..a00cb7d 100644
+--- a/tests/test_orientation.py
++++ b/tests/test_orientation.py
+@@ -32,3 +32,14 @@ def test_heading_wraps_into_0_360(frames):
+ def test_tilt_from_roll_and_pitch():
+     assert tilt_deg(pose(roll=20.0)) == pytest.approx(20.0)
+     assert tilt_deg(pose(pitch=-10.0, yaw=123.0)) == pytest.approx(10.0)
++
++
++def test_quaternion_sign_does_not_change_rotation(frames):
++    # amr-03 ships qw negative; q and -q are the same rotation.
++    p = frames["amr-03"].pose
++    assert p.qw < 0
++    neg = Pose(p.x, p.y, p.z, p.roll, p.pitch, p.yaw, -p.qx, -p.qy, -p.qz, -p.qw)
++    assert heading_deg(neg) == pytest.approx(heading_deg(p))
++    assert heading_deg(neg) == pytest.approx(359.0)
++    assert tilt_deg(neg) == pytest.approx(tilt_deg(p))
++    assert np.allclose(rotation_matrix(neg), rotation_matrix(p))
