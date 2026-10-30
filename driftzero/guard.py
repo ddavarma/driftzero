@@ -79,6 +79,10 @@ class FileChange:
 
 # --------------------------------------------------------------------------- classification
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
 def _is_test_path(path: str) -> bool:
     parts = Path(path).parts
     return "tests" in parts or "test" in parts or Path(path).name.startswith("test_") or path.endswith("_test.py")
@@ -281,7 +285,7 @@ def _check_python(path: str, old: str | None, new: str | None, res: GuardResult)
     for qual, fn_new in new_fns.items():
         if qual not in old_fns:
             if is_test_module and _is_test(qual):
-                res.review_items.append(Finding("added_test", path, f"new test ({_assert_count(fn_new)} asserts)", test=qual))
+                res.review_items.append(Finding("added_test", path, f"new test ({_plural(_assert_count(fn_new), 'assert')})", test=qual))
             continue
         _diff_function(path, qual, old_fns[qual], fn_new, res)
 
