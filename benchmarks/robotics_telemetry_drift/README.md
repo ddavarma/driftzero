@@ -21,3 +21,4 @@ pytest -q          # v1 suite: green on main
 | `fusion.py` | inverse-variance position/heading fusion | yes: `noise` |
 | `alerts.py` | tilt / noisy / battery alerts | yes: `noise`, new `health` |
 | `report.py` | fleet summary | indirectly |
+| `charging.py` | dock scheduling from battery level | no (control: must stay untouched) |
