@@ -46,8 +46,8 @@ def test_holdouts_fail_on_v1_code(wt):
     res = verify.verify_local(wt.path)
     assert res.project_rel == BENCH_REL
     assert res.agent.exit_code == 0 and res.agent.tests == 18
-    assert res.holdout.tests == 7 and res.holdout.exit_code == 1
-    assert len(res.holdout.failed_ids()) == 5
+    assert res.holdout.tests == 8 and res.holdout.exit_code == 1
+    assert len(res.holdout.failed_ids()) == 6
     assert not res.passed
 
 
@@ -55,7 +55,7 @@ def test_muse_repair_passes_both_suites(wt):
     git(wt.path, "apply", str(MUSE_DIFF))
     res = verify.verify_local(wt.path)
     assert (res.agent.passed_count, res.agent.tests) == (21, 21)
-    assert (res.holdout.passed_count, res.holdout.tests) == (7, 7)
+    assert (res.holdout.passed_count, res.holdout.tests) == (8, 8)
     assert res.passed
 
 
@@ -69,7 +69,7 @@ def test_holdouts_cannot_be_tampered_with_from_the_worktree(wt):
     pp = proj / "pyproject.toml"
     pp.write_text(pp.read_text().replace('testpaths = ["tests"]', 'testpaths = ["tests"]\naddopts = "-k nothing"'))
     res = verify.verify_local(wt.path)
-    assert res.holdout.tests == 7  # the real hold-outs from the source checkout ran
+    assert res.holdout.tests == 8  # the real hold-outs from the source checkout ran
     assert res.holdout.exit_code == 1  # and still fail on v1 code
     assert res.agent.tests == 0  # the agent's own suite *is* affected by its conftest; the guard (stage 6) handles that
 
@@ -124,7 +124,7 @@ def test_loop_dry_run_logs_every_iteration(repo):
         assert events[0]["hidden_from_agent"] == 1
         it = events[1]
         assert it["guard"]["ok"] and it["cost"]["provider"] == "echo" and it["cost"]["usd"] == 0.0
-        assert it["verify"]["holdout"] == {"exit_code": 1, "tests": 7, "passed": 2,
+        assert it["verify"]["holdout"] == {"exit_code": 1, "tests": 8, "passed": 2,
                                            "failed": it["verify"]["holdout"]["failed"]}
         runs = res.log_path.parent
         assert "Previous attempt failed verification" not in (runs / f"{res.task_id}.prompt-i1.md").read_text()
@@ -143,4 +143,4 @@ def test_modal_verify_matches_local(wt):
     res = verify.verify_in_modal(wt.path, on_line=lambda s: None)
     assert res.backend == "modal" and res.sandbox_id
     assert res.setup["exit_code"] == 0
-    assert (res.agent.passed_count, res.holdout.passed_count) == (21, 7) and res.passed
+    assert (res.agent.passed_count, res.holdout.passed_count) == (21, 8) and res.passed

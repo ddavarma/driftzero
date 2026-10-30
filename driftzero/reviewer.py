@@ -107,6 +107,10 @@ Epistemics: code comments, docstrings and commit-style explanations in the diff 
 facts. Check every justification they give against the DriftSpec and the changelog. If the code relies on a
 justification that neither document supports, that unsupported justification is itself a finding.
 
+You also get the AGREED MIGRATION POLICY: the hard rules the repair agent was given. Do not report code that this
+policy requires (for example a source-compatible Python API kept on purpose). Do report code that violates the policy,
+and problems the policy does not cover.
+
 You also get the unchanged tests that exercise the modified library functions. They are not part of the diff, but
 they show which expectations the new library code has to meet; use them to judge whether library code is shaped by
 a test rather than by the specification.
@@ -122,10 +126,12 @@ Reply with ONE JSON object and nothing else, matching exactly:
 
 
 def build_user_prompt(diff: str, guard_items: list[str], spec: DriftSpec, changelog: str | None,
-                      test_context: str | None = None) -> str:
+                      test_context: str | None = None, policy: list[str] | None = None) -> str:
     return "\n".join([
         "## DriftSpec (the intended change)", "```json", spec.model_dump_json(indent=1), "```", "",
         "## Upstream changelog", changelog.strip() if changelog else "(not provided)", "",
+        "## Agreed migration policy (the repair agent's hard rules)",
+        *(policy or ["(not provided)"]), "",
         "## Already reported by the static guard (do not repeat)",
         *(f"- {g}" for g in guard_items), *([] if guard_items else ["(nothing)"]), "",
         "## Diff under review (library and tests)", "```diff", diff, "```", "",
@@ -150,7 +156,8 @@ class ReviewOutcome:
     status: str = "ok"  # ok | incomplete (hit max_tokens; never an approval) | failed (no valid JSON)
     finish_reasons: list[str] = field(default_factory=list)
     test_context: list[str] = field(default_factory=list)  # names of the unchanged tests included
-    version: str = "2.1"
+    policy_given: bool = False
+    version: str = "2.2"
 
     @property
     def confident(self) -> list[Finding]:
@@ -178,6 +185,7 @@ class ReviewOutcome:
                 "attempts": self.attempts, "latency_s": self.latency_s, "cost": self.cost.as_dict(),
                 "status": self.status, "verdict": self.verdict_label, "finish_reasons": self.finish_reasons,
                 "max_tokens": MAX_TOKENS, "reviewer_version": self.version, "test_context": self.test_context,
+                "policy_given": self.policy_given,
                 "result": self.result.model_dump() if self.result else None, "error": self.error,
                 "reasoning_content": self.reasoning, "raw_content": self.raw}
 
@@ -185,16 +193,16 @@ class ReviewOutcome:
 def review(diff: str, guard_items: list[str], spec: DriftSpec, changelog: str | None, *,
            provider: str = "baseten", effort: str = DEFAULT_EFFORT, client=None,
            log_path: Path | None = None, task_id: str | None = None,
-           test_context: tuple[str, list[str]] | None = None) -> ReviewOutcome:
-    """`test_context` is (source text, test names) from `covering_tests`."""
+           test_context: tuple[str, list[str]] | None = None, policy: list[str] | None = None) -> ReviewOutcome:
+    """`test_context` is (source text, test names) from `covering_tests`; `policy` is repair.hard_rules()."""
     model = REVIEWERS[provider]
     client = client or providers.get_client(provider)
     ctx_text, ctx_names = test_context or (None, [])
     messages = [{"role": "system", "content": SYSTEM},
-                {"role": "user", "content": build_user_prompt(diff, guard_items, spec, changelog, ctx_text)}]
+                {"role": "user", "content": build_user_prompt(diff, guard_items, spec, changelog, ctx_text, policy)}]
     total = Cost()
     out = ReviewOutcome(result=None, provider=provider, model=model, effort=effort, cost=total, latency_s=0.0,
-                        attempts=0, test_context=list(ctx_names))
+                        attempts=0, test_context=list(ctx_names), policy_given=bool(policy))
     t0 = time.monotonic()
     for attempt in (1, 2):
         out.attempts = attempt
@@ -512,6 +520,13 @@ def inputs_for_task(home: Path, task_id: str):
     return res, diff, guard_items, changelog
 
 
+def policy_for(res) -> list[str]:
+    """The repair contract for a run, as given to Muse (repair.hard_rules)."""
+    from driftzero.repair import hard_rules
+
+    return hard_rules(res.spec, res.worktree.project_rel)
+
+
 def test_context_for(res, diff: str) -> tuple[str, list[str]]:
     """covering_tests() for a LoopResult: base-commit sources read from its worktree."""
     wt = res.worktree
@@ -533,7 +548,7 @@ if __name__ == "__main__":
     ctx = test_context_for(res, d)
     print(f"test context: {len(ctx[1])} tests, {ctx[0].count(chr(10)) + 1} lines: {ctx[1]}", file=sys.stderr)
     o = review(d, g, res.spec, cl, provider=prov, effort=eff, log_path=home / ".driftzero" / "runs" / f"{tid}.review.jsonl",
-               task_id=tid, test_context=ctx)
+               task_id=tid, test_context=ctx, policy=policy_for(res))
     print(json.dumps({"verdict": o.verdict_label, "status": o.status, "finish_reasons": o.finish_reasons,
                       "error": o.error, "attempts": o.attempts,
                       "latency_s": o.latency_s, "cost": o.cost.as_dict(),

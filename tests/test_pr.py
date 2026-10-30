@@ -63,7 +63,7 @@ def test_body_has_every_section(verified):
     body = pr.render_body(res, pr_s=3.2, spec_path=str(res.worktree.root / BENCH_REL / "driftspec_v2.json"))
     lead = body.splitlines()[:3]
     assert lead[0].startswith("> **Changed** ") and "+" in lead[0] and "library" in lead[0]
-    assert lead[1].startswith("> **Verified** agent suite 21/21 · hold-out 7/7")
+    assert lead[1].startswith("> **Verified** agent suite 21/21 · hold-out 8/8")
     assert lead[2].startswith("> **Cost** $0.4616 · 160 s repair loop + 3.2 s PR")
     headings = [ln for ln in body.splitlines() if ln.startswith("## ")]
     assert headings == ["## Agent's own summary", "## Review findings", "## API change (DriftSpec)", "## Blast radius",
@@ -107,7 +107,7 @@ def test_verification_lists_holdouts_logs_and_reproduce(verified):
     for name in ("test_client_requests_v2_paths", "test_negative_qw_robots_heading_and_tilt",
                  "test_charging_schedule_unaffected"):
         assert f"- ✅ `{name}` passed" in body
-    assert body.count("- ✅ `") == 7
+    assert body.count("- ✅ `") == 8
     assert "**Wall time:** repair " in body and " · PR 3.2 s · total 163 s" in body
     assert f"- [`{res.task_id}.jsonl`](https://github.com/o/r/blob/main/docs/runs/{res.task_id}.jsonl) · loop log" in body
     assert body.count("<details>") == 2

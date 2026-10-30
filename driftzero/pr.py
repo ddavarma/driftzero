@@ -552,7 +552,7 @@ def review_pr(res: LoopResult, pr_url: str, *, provider: str = "baseten", effort
         outcome = reviewer.review(diff, [str(f) for f in (res.guard.review_items if res.guard else [])], res.spec,
                                   changelog, provider=provider, effort=effort or reviewer.DEFAULT_EFFORT,
                                   log_path=log_path or res.log_path, task_id=res.task_id,
-                                  test_context=reviewer.test_context_for(res, diff))
+                                  test_context=reviewer.test_context_for(res, diff), policy=reviewer.policy_for(res))
     res.review = outcome
     slug = res.target_slug or reviewer.repo_slug(wt.root)
     number = pr_url.rstrip("/").rsplit("/", 1)[-1]

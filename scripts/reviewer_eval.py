@@ -51,6 +51,7 @@ def detect(findings: list[dict]) -> dict:
 def one(task: str, run: int, effort: str, inputs: dict) -> dict:
     res, diff, guard_items, changelog, ctx = inputs[task]
     out = reviewer.review(diff, guard_items, res.spec, changelog, effort=effort, test_context=ctx,
+                          policy=reviewer.policy_for(res),
                           log_path=OUT / f"{task}.eval.jsonl", task_id=task)
     findings = [f.model_dump() for f in (out.result.findings if out.result else [])]
     return {"task": task, "pr": TASKS[task], "run": run, "effort": effort, "verdict": out.verdict_label,

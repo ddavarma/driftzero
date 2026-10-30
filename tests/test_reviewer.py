@@ -183,3 +183,17 @@ def test_v21_prompt_requires_confidence_and_forbids_suppression():
     assert "Suppression is not allowed; low confidence is." in sys_
     assert '"confidence": 0.0-1.0' in reviewer.SYSTEM
     assert "round" not in reviewer.SYSTEM.lower()
+
+
+def test_v22_policy_section_and_no_rounding_in_policy():
+    import re
+
+    from driftzero.repair import hard_rules
+
+    policy = hard_rules(SPEC, "benchmarks/robotics_telemetry_drift")
+    user = reviewer.build_user_prompt(DIFF, [], SPEC, None, None, policy)
+    assert "## Agreed migration policy (the repair agent's hard rules)" in user
+    assert policy[1].startswith("2. Test changes are limited") and policy[1] in user
+    assert "Do not report code that\npolicy requires" in reviewer.SYSTEM or "policy requires" in reviewer.SYSTEM
+    assert not re.search(r"\bround", " ".join(policy).lower())  # 'around' is fine; 'round'/'rounding' is not
+    assert "round" not in reviewer.SYSTEM.lower()

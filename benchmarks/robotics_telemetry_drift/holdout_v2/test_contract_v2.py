@@ -113,3 +113,14 @@ def test_charging_schedule_unaffected():
     assert [s.robot_id for s in slots] == [rid for _, rid in low]
     assert slots[0].dock == 0 and slots[0].start_min == 0.0
     assert slots[0].minutes == pytest.approx((0.95 - low[0][0]) / 0.012)
+
+
+def test_health_outside_documented_range_is_rejected():
+    schema = SPEC["components"]["schemas"]["TelemetryFrame"]["properties"]["health"]
+    lo, hi = schema["minimum"], schema["maximum"]  # openapi_v2.json: health is 0..1
+    ok = copy.deepcopy(BY_ID["amr-01"])
+    assert parse_frame(ok).health == ok["health"]  # an in-range frame must parse (rules out vacuous passes)
+    for bad in (hi + 1.0, lo - 0.1, float("nan")):
+        payload = dict(ok, health=bad)
+        with pytest.raises(TelemetryParseError):
+            parse_frame(payload)

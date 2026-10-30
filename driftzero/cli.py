@@ -174,7 +174,8 @@ def review(
         _, d, g, cl = reviewer_mod.inputs_for_task(home, task)
         outcome = reviewer_mod.review(d, g, res.spec, cl, provider=reviewer_provider, effort=effort,
                                       log_path=runs / f"{task}.review.jsonl", task_id=task,
-                                      test_context=reviewer_mod.test_context_for(res, d))
+                                      test_context=reviewer_mod.test_context_for(res, d),
+                                      policy=reviewer_mod.policy_for(res))
     rv = outcome
     typer.echo(json.dumps({"verdict": rv.verdict_label, "status": rv.status, "error": rv.error,
                            "test_context": rv.test_context,

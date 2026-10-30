@@ -72,7 +72,7 @@ def test_clone_worktree_verify_and_push_to_target(remote):
         git(wt.path, "apply", "-p3", str(MUSE_DIFF))
         holdout = target.holdout_for(t, home, targets_file=mapping)
         v = verify.verify_local(wt.path, holdout, project_rel=wt.project_rel)
-        assert (v.agent.passed_count, v.holdout.passed_count, v.holdout.tests) == (21, 7, 7) and v.passed
+        assert (v.agent.passed_count, v.holdout.passed_count, v.holdout.tests) == (21, 8, 8) and v.passed
 
         spec = DriftSpec.load(BENCH / "driftspec_v2.json")
         g = guard_check(wt, repair.collect_diff(wt))
@@ -107,7 +107,7 @@ def test_loop_dry_run_on_url_target(remote):
         it = res.iterations[0]
         assert it["repair"]["terminal"] == "completed"  # Muse accepts a worktree outside the source repo
         assert it["verify"]["agent"]["passed"] == 18 and it["verify"]["holdout"] == {
-            "exit_code": 1, "tests": 7, "passed": 2, "failed": it["verify"]["holdout"]["failed"]}
+            "exit_code": 1, "tests": 8, "passed": 2, "failed": it["verify"]["holdout"]["failed"]}
         assert not res.passed
     finally:
         repair.remove_worktree(res.worktree)
