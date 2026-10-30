@@ -1,4 +1,4 @@
-# Reviewer consistency eval (v2, v2.1, v2.2, v2.3)
+# Reviewer consistency eval (v2, v2.1, v2.2, v2.3; shipped: v2.1 + filter)
 
 **Question:** how reliably does reviewer v2 (Muse Spark Open, `meta-models/muse-spark-open-1026` on Baseten,
 `reasoning_effort=high`, `max_tokens=24000`) report the two known issues in the two existing migration PRs?
@@ -230,7 +230,9 @@ runs; v2.2 in 0/3. Neither version is strictly better: v2.1 over-reports, v2.2 u
 smell. A policy that said explicitly what it does not permit (e.g. transformations of derived values that exist only
 to meet a test) might restore it, but that would be tuning toward this finding, so it is not done here.
 
-## v2.3: policy scope sentence (9 runs). The reviewer prompt is frozen here.
+## v2.3: policy scope sentence (9 runs)
+
+*Superseded: v2.3 was briefly frozen, then replaced by the v2.1 prompt + a deterministic filter (see "Shipping decision" below).*
 
 Change from v2.2, nothing else: the policy preamble adds "This policy governs which interfaces exist, not how values
 are computed; numeric fidelity to the DriftSpec and changelog formulas is always in scope." Same inputs, 3 runs per PR
@@ -285,8 +287,29 @@ v2.2's; the confidence attached to it is not.
 
 ### Reading v2.3, and the frozen prompt
 
-v2.3 is the version frozen in the code (`reviewer_version` 2.3). On this evidence it is the weakest of the three as a
-gate: it notices the right things and then rates them all below 0.5, so its verdict and the `--review-fix` trigger
+On this evidence v2.3 is the weakest of the three as a gate: it notices the right things and then rates them all below 0.5, so its verdict and the `--review-fix` trigger
 carry no signal on these diffs. Its value is in the "Possible issues (low confidence)" table, which a human has to
 read. For comparison, at ≥ 0.6 the rounding was caught in 5/6 runs by v2.1, 2/6 by v2.2 and 0/6 by v2.3. Three runs per
 cell, one model, one effort level, two to three diffs; the trend is consistent but the sample is small.
+
+## Shipping decision: v2.1 prompt + deterministic policy filter (frozen)
+
+The reviewer that ships is the **v2.1 prompt, byte-for-byte** (diff, unchanged covering tests, guard items, DriftSpec,
+changelog; confidence on every finding; suppression forbidden; no policy text), followed by a **deterministic
+post-filter** in `reviewer.py`. Policy moved out of the prompt because both prompt-level attempts lowered recall on the
+very smell the reviewer exists to catch: the rounding at ≥ 0.6 confidence went 5/6 (v2.1) → 2/6 (v2.2) → 0/6 (v2.3),
+and v2.3 put every finding below 0.5. The noise that motivated v2.2 (findings about compatibility code the repair rules
+require) is handled after the model instead, where it cannot change what the model reports or how confident it is.
+
+**The filter.** A finding is tagged `policy_required` if its category is `dead_compat_code`, or if every added line it
+quotes is a plain field declaration of a removed v1 field kept as a derived value (`roll: float = 0.0`; names from the
+DriftSpec's removed fields). Tagged findings stay in the PR tables, marked, but never trigger `--review-fix`.
+
+**Replayed on the stored v2.1 eval findings** (no new model calls; 53 findings over 9 runs): 14 tagged, 13 by category
+and 1 by the declaration rule. The `--review-fix` trigger (severity ≥ medium, confidence ≥ 0.6, not tagged) still
+contains the rounding in 3/3 DriftZero PR #1 runs and 2/3 fleet-telemetry-v1 PR #2 runs, the same as raw v2.1. Two
+costs, both visible in the replay: in fleet-telemetry-v1 PR #1 run 1 the model labelled both defaults findings
+`dead_compat_code`, so the category rule removed them from the trigger (defaults reach the trigger in 2/3 runs on each
+diff that has them); and the one finding tagged by the declaration rule ("Library keeps noise as a stored field
+alongside covariance with no consistency check", 0.58) was one I judged debatable, so tagging it loses its half-valid
+point about a consistency check. The real stale-Euler defect in the same run (0.82) was not tagged.

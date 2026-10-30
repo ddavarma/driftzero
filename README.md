@@ -115,6 +115,7 @@ only from the v2 spec and changelog. They are never shown to the agent, excluded
 
 | run | iterations | guard | agent suite | hold-out | sandbox | cost | wall time |
 |---|---|---|---|---|---|---|---|
+| [changelog → PR #5 on fleet-telemetry-v1, `--review-fix`, shipped reviewer (v2.1 + filter)](https://github.com/ddavarma/fleet-telemetry-v1/pull/5) (`20261030-161858-a70fa1`) | 1 | ok, 14 review items | 23/23 | 8/8 | Modal, 3.7 s | $0.56 (differ $0.024, review $0.052) | 234 s end to end |
 | [changelog → PR #4 on fleet-telemetry-v1, `--review-fix`, reviewer v2.2](https://github.com/ddavarma/fleet-telemetry-v1/pull/4) (`20261030-155223-26855b`) | **2**: iteration 1 failed the new health-range hold-out (7/8), the redacted retry fixed it | ok, 13 review items | 22/22 | 8/8 | Modal, 4.5 s + 5.2 s | $0.68 (differ $0.026, review $0.040) | 234 s end to end |
 | [changelog → PR #3 on fleet-telemetry-v1, `--review-fix`, reviewer v2.1](https://github.com/ddavarma/fleet-telemetry-v1/pull/3) (`20261030-043600-9b46d7`) | 1 + 1 review-fix (no code change: all 4 findings justified) | ok, 15 review items | 23/23, re-verify 23/23 | 7/7, re-verify 7/7 | Modal, 4.7 s + 6.6 s | $0.84 (differ $0.019, review $0.065, fix pass $0.23) | 300 s end to end |
 | [changelog → PR #2 on fleet-telemetry-v1, `--review-fix`](https://github.com/ddavarma/fleet-telemetry-v1/pull/2) (`20261030-041743-ffdf04`) | 1 (+0: reviewer approved, no fix pass) | ok, 14 review items | 25/25 | 7/7 | Modal, 3.8 s | $0.67 (differ $0.026, review $0.068) | 260 s end to end |
@@ -166,13 +167,18 @@ Logs: [`docs/runs/`](docs/runs/). The end-to-end explanation, with every number 
     never reached 0.5 (v2.1: 2/3 at ≥ 0.6), with the reviewer reasoning that the policy's permission to keep derived
     Euler values covers rounding them; the defaults finding fell to 1/3 (DriftZero PR #1) and 2/3 (fleet-telemetry-v1
     PR #1) at ≥ 0.5.
-  - *v2.3* (frozen) adds one sentence to the policy: it governs which interfaces exist, not how values are computed;
+  - *v2.3* adds one sentence to the policy: it governs which interfaces exist, not how values are computed;
     numeric fidelity to the DriftSpec and changelog formulas is always in scope. **The catch rate went down again**:
     over 9 runs no finding reached 0.5 confidence (highest 0.45), so every run approved and `--review-fix` would never
     trigger. The known issues are still mentioned at low confidence (rounding 3/3 and 2/3, defaults 3/3 and 2/3), and
     on fleet-telemetry-v1 PR #1 7 of 9 non-defaults findings were real defects, 1 spurious. At ≥ 0.6 the rounding was
-    caught in 5/6 runs by v2.1, 2/6 by v2.2 and 0/6 by v2.3. The shipped prompt is v2.3; its verdict carries no signal
-    on these diffs, and its value is the "Possible issues (low confidence)" table a human reads. All numbers:
+    caught in 5/6 runs by v2.1, 2/6 by v2.2 and 0/6 by v2.3.
+  - **What ships (frozen): the v2.1 prompt, byte-for-byte, plus a deterministic post-filter.** Policy left the prompt
+    because both prompt-level versions cost recall. The filter tags findings about compatibility code the repair rules
+    require (category `dead_compat_code`, or evidence that only declares a removed v1 field kept as a derived value) as
+    `policy-required`: shown in the PR, never a `--review-fix` trigger. Replayed on the stored v2.1 eval findings it
+    tags 14 of 53 and keeps the rounding in the trigger set exactly as often as raw v2.1 (3/3 and 2/3); the cost is that
+    a defaults finding the model happens to label `dead_compat_code` is excluded too. All numbers:
     [`docs/reviewer_eval.md`](docs/reviewer_eval.md).
   - Caveats: 3 runs per cell, one model, one effort level, two diffs; no false-positive measurement. The v2 design
     (test context, claims rule) was chosen after seeing v1 miss this case. The reviewer's own `line_hint`s are
@@ -184,6 +190,10 @@ Logs: [`docs/runs/`](docs/runs/). The end-to-end explanation, with every number 
 - **Python only.** Blast radius, the guard and verification assume Python, `ast` and pytest. Impact analysis is
   static, with no type inference: method calls resolve by unique method name, and dynamic access (`getattr`,
   `**kwargs` payload plumbing) is invisible.
+- **The shipped reviewer under-rates a real issue on a fresh diff.** On fleet-telemetry-v1 PR #5 it reported the
+  required-fields-with-defaults issue (which is present) at 0.40, so the verdict was `approve` and no fix pass ran; its
+  other three findings were `policy-required`. A review-fix pass that commits a change and gets a second review has
+  still not happened live.
 - **The repair brief and the reviewer disagree on compatibility.** In the live `--review-fix` run (fleet-telemetry-v1
   PR #3) the trigger fired on 4 findings (confidence 0.70–0.82), and Muse ran the extra iteration, re-verified (23/23,
   7/7), and **changed nothing**: it justified all four by citing the repair prompt's own rule to keep the Python API
