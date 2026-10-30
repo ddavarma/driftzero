@@ -278,6 +278,10 @@ Your job is to annotate and complete:
 - anything else the changelog states that the spec diff cannot see (renamed fields, changed units or
   semantics with an unchanged schema). Add those as new entries.
 - summary: 2-4 sentences covering every breaking change.
+- target_dependency: if, and only if, the changelog explicitly states the package to install AND a version
+  constraint for it (e.g. "requires foo>=2,<3"), fill name and constraint (constraint in pip syntax, e.g. ">=2,<3")
+  and set source to "changelog". An instruction to upgrade without a version, or a version only in a title, is not a
+  stated constraint: use null.
 Use dotted paths inside the named schema (schema_name="TelemetryFrame", path="orientation.roll").
 Never invent a change that neither source supports. Use "" for notes you have nothing to say about."""
 
@@ -311,6 +315,8 @@ def merge(skel: DriftSpec, model_spec: DriftSpec) -> tuple[DriftSpec, list[str],
     """Deterministic entries keep their structure; take only annotations from the model; keep model additions."""
     out = skel.model_copy(deep=True)
     out.summary = model_spec.summary or skel.summary
+    if model_spec.target_dependency is not None and model_spec.target_dependency.constraint.strip():
+        out.target_dependency = model_spec.target_dependency.model_copy(update={"source": "changelog"})
     if skel.api == "unknown API":
         out.api, out.from_version, out.to_version = model_spec.api, model_spec.from_version, model_spec.to_version
     added, restored = [], []
@@ -364,6 +370,37 @@ def diff(changelog: str | Path | None = None, openapi_v1: str | Path | None = No
     cost = Cost(r.input_tokens, r.cached_tokens, r.output_tokens, r.reasoning_tokens, r.usd)
     return DiffResult(spec=spec, candidates=candidates, skeleton=skel, model_added=added, restored=restored,
                       cost=cost, latency_s=r.latency_s)
+
+
+def parse_target_dep(text: str):
+    """`openai>=1,<2` -> TargetDependency(name='openai', constraint='>=1,<2', source='cli')."""
+    from packaging.requirements import Requirement
+
+    from driftzero.spec import TargetDependency
+
+    req = Requirement(text)
+    constraint = ",".join(sorted(str(sp) for sp in req.specifier)) if req.specifier else ""
+    if not constraint:
+        raise ValueError(f"--target-dep needs a version constraint, got {text!r}")
+    return TargetDependency(name=req.name, constraint=constraint, source="cli")
+
+
+def resolve_target_dependency(spec: DriftSpec, cli: str | None) -> DriftSpec:
+    """Changelog-stated dependency if present, else --target-dep; a disagreement between the two is an error."""
+    if cli is None:
+        return spec
+    from_cli = parse_target_dep(cli)
+    stated = spec.target_dependency
+    if stated is None:
+        return spec.model_copy(update={"target_dependency": from_cli})
+    from packaging.specifiers import SpecifierSet
+
+    same = stated.name.lower() == from_cli.name.lower() and \
+        SpecifierSet(stated.constraint) == SpecifierSet(from_cli.constraint)
+    if not same:
+        raise ValueError(f"the changelog states {stated.requirement} but --target-dep is {from_cli.requirement}; "
+                         "fix one of them")
+    return spec
 
 
 # --------------------------------------------------------------------------- comparison

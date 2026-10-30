@@ -155,39 +155,41 @@ def _impact_section(br: BlastRadius) -> str:
     return "\n".join(lines)
 
 
-def hard_rules(spec: DriftSpec, project_rel: str = ".", python: str = "python") -> list[str]:
-    """The repair contract: numbered hard rules given to Muse, and to the reviewer as agreed migration policy."""
+def hard_rules(spec: DriftSpec, project_rel: str = ".", python: str = "python",
+               repair_rules: list[str] | tuple = ()) -> list[str]:
+    """The repair contract given to Muse: generic rules for every target, then the target's own `repair_rules`
+    (from benchmarks/targets.json; `{from_version}` / `{to_version}` are filled in)."""
     proj = project_rel.rstrip("/") or "."
     test_cmd = f"cd {proj} && {python} -m pytest -q"
-    return [
-        "1. Never delete, skip, xfail or rename a test function, and never remove an `assert`. Never weaken "
+    dep = spec.target_dependency
+    dep_name = f"`{dep.name}`" if dep else "the upgraded library"
+    rules = [
+        "Never delete, skip, xfail or rename a test function, and never remove an `assert`. Never weaken "
         "an assertion: no wider tolerances, no fewer expected items, no `assert True`, and no try/except around asserts.",
-        f"2. Test changes are limited to the {spec.from_version} wire format: convert fixture data to the "
-        f"{spec.to_version} shape, and update endpoint path / `api_version` literals. Prefer keeping the public Python "
-        "API source-compatible (dataclass attributes, constructors and function signatures that tests use) so "
-        "existing test bodies keep passing unchanged. For example, Euler angles and a scalar `noise` can remain "
-        "as derived values computed from the quaternion and covariance.",
-        f"3. Fixture data must be converted to the {spec.to_version} shape, not dual-format. The `200` response "
-        "`example` of `GET /fleet/telemetry` in `openapi_v2.json` is exactly the existing v1 fixture expressed in v2 "
-        "(same robots and poses). Use it as `tests/fixtures/fleet_v2.json` and point `tests/conftest.py` at it.",
-        "4. Add a **health alert**: carry `health` on the parsed frame and raise an alert of kind `\"health\"` "
-        "when `health < 0.5` (module constant `MIN_HEALTH = 0.5`, overridable like the other thresholds). This is the "
-        "only reason an existing test's expected alert set or count may change, and only by *adding* the new health "
-        "alerts. Add at least one dedicated test for it.",
-        "5. **Negative `qw`**: `q` and `-q` are the same rotation and the server does not canonicalise sign. Never "
-        "assume `qw >= 0`. Use sign-invariant formulas (rotation matrix from q, `atan2` heading), normalise q "
-        "defensively, and add a test that a quaternion and its negation give the same heading, tilt and rotation. "
-        "Robot `amr-03` in the fixture has `qw ≈ -0.99993` with heading 359°.",
-        "6. Uncertainty: derive the scalar position sigma as `sqrt(trace(P_pos) / 3)` where `P_pos = covariance[0:3][0:3]`, "
-        "so isotropic fixtures keep the same fusion weights and noise alerts as before. Validate the covariance shape (6x6).",
-        f"7. Before finishing, run `{test_cmd}`. Every test must pass. If something fails, fix the code (not the test) "
-        "and run it again. numpy and pytest are already installed in that interpreter; do not pip install anything. "
-        "Never pipe pytest through `tail` or `head` (the pipe hides pytest's exit code); run `python -m pytest -q` directly.",
-        "8. Do not commit, create branches, or touch git state; leave your changes in the working tree.",
-        "9. Your final answer must be the JSON object required by the output schema: `tests_run` and "
+        f"Tests may change only by updating literals and fixture data to the {spec.to_version} contract and by "
+        "adding tests. Prefer keeping the public Python API source-compatible (attributes, constructors and function "
+        "signatures that tests use) so existing test bodies keep passing unchanged.",
+    ]
+    if dep:
+        rules.append(
+            f"Target dependency: the migrated project must depend on `{dep.requirement}`. Pin exactly this constraint "
+            "wherever the project already declares its dependencies (requirements*.txt, pyproject.toml, setup.py / "
+            "setup.cfg). Do not add packaging or manifest files the project does not have.")
+    rules += [
+        f"Never stub, mock or make {dep_name} optional in library code: no try/except ImportError fallbacks, no "
+        "sys.modules injection, no stand-in classes. If it cannot be imported, that is an environment problem: say so "
+        "in your final answer instead of changing code around it.",
+        f"Before finishing, run `{test_cmd}`. Every test must pass. If something fails, fix the code (not the test) "
+        "and run it again. That interpreter already has the project's dependencies installed; do not pip install "
+        "anything. Never pipe pytest through `tail` or `head` (the pipe hides pytest's exit code); run "
+        "`python -m pytest -q` directly.",
+        "Do not commit, create branches, or touch git state; leave your changes in the working tree.",
+        "Your final answer must be the JSON object required by the output schema: `tests_run` and "
         "`tests_passed` come from your last pytest run, and `files_changed` lists every file you modified or created. "
         "`reviewer_responses` is `[]` unless this prompt lists numbered reviewer findings.",
     ]
+    rules += [r.format(from_version=spec.from_version, to_version=spec.to_version) for r in repair_rules]
+    return [f"{i}. {r}" for i, r in enumerate(rules, 1)]
 
 
 def write_repair_prompt(
@@ -199,6 +201,7 @@ def write_repair_prompt(
     python: str = sys.executable,
     out_path: Path | None = None,
     reviewer_findings: list | None = None,
+    repair_rules: list[str] | tuple = (),
 ) -> Path:
     """Render the Muse Code repair prompt to a file and return its path.
 
@@ -225,7 +228,7 @@ def write_repair_prompt(
         "",
         "## Hard rules",
         "",
-        *hard_rules(spec, project_rel, python),
+        *hard_rules(spec, project_rel, python, repair_rules),
         "",
         "## DriftSpec",
         "",

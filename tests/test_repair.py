@@ -102,8 +102,10 @@ def test_worktree_diff_and_cleanup(mono_repo):
 def test_prompt_contains_rules_fields_changelog_and_retry_traceback(tmp_path):
     spec = DriftSpec.load(SPEC_PATH)
     br = analyze(BENCH, spec)
+    fleet_rules = json.loads((ROOT / "benchmarks" / "targets.json").read_text())[
+        "benchmarks/robotics_telemetry_drift"]["repair_rules"]
     p = repair.write_repair_prompt(spec, br, project_rel="benchmarks/robotics_telemetry_drift",
-                                   out_path=tmp_path / "p.md")
+                                   out_path=tmp_path / "p.md", repair_rules=fleet_rules)
     text = p.read_text()
     for needle in ("Never delete, skip, xfail", "MIN_HEALTH = 0.5", "Negative `qw`", "sqrt(trace(P_pos) / 3)",
                    "-m pytest -q", "`TelemetryFrame.health`", "`TelemetryFrame.orientation.qw`",

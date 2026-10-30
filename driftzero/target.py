@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 TARGETS_FILE = Path(__file__).resolve().parents[1] / "benchmarks" / "targets.json"
@@ -57,6 +57,37 @@ def holdout_for(target: Target, home: Path, targets_file: Path = TARGETS_FILE) -
         return path.resolve() if path.is_dir() else None
     found = sorted(p for p in target.path.glob("holdout_*") if p.is_dir())
     return found[0].resolve() if found else None
+
+
+@dataclass
+class TargetConfig:
+    """Per-target settings from benchmarks/targets.json (all optional)."""
+
+    holdout: Path | None = None
+    holdout_name: str | None = None          # directory name the hold-outs get in the verify sandbox
+    holdout_requirements: list[str] = field(default_factory=list)  # pip requirements of the hold-outs themselves
+    validated_against: str | None = None     # target-dependency pin the hold-outs were validated against
+    repair_rules: list[str] = field(default_factory=list)  # target-specific hard rules for the repair prompt
+
+
+def config_for(target: Target, home: Path, targets_file: Path = TARGETS_FILE) -> TargetConfig:
+    """Config by owner/name for remote targets, by benchmark path for local ones; else hold-outs found by glob."""
+    mapping = json.loads(Path(targets_file).read_text()) if Path(targets_file).exists() else {}
+    entry = mapping.get(target.slug) if target.slug else None
+    if entry is None and not target.slug:
+        for key, e in mapping.items():
+            if isinstance(e, dict) and e.get("benchmark") and (Path(home) / e["benchmark"]).resolve() == target.path:
+                entry = e
+                break
+    if entry is None:
+        holdout = holdout_for(target, home, targets_file)
+        return TargetConfig(holdout=holdout, holdout_name=holdout.name if holdout else None)
+    path = (Path(home) / entry["holdout"]).resolve() if entry.get("holdout") else None
+    holdout = path if path and path.is_dir() else None
+    return TargetConfig(holdout=holdout, holdout_name=entry.get("holdout_name") or (holdout.name if holdout else None),
+                        holdout_requirements=list(entry.get("holdout_requirements") or []),
+                        validated_against=entry.get("validated_against"),
+                        repair_rules=list(entry.get("repair_rules") or []))
 
 
 def home_dir() -> Path:

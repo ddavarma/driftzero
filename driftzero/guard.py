@@ -3,6 +3,8 @@
 AST-compares every changed test file between the base commit and the worktree.
 
 Hard rejections (the repair is sent back, verify is skipped):
+  - library code that stubs the DriftSpec's target dependency: try/except ImportError around its import, or
+    sys.modules injection under its name (only when the repair introduced it)
   - a test function removed (or renamed)
   - a test's assertion count decreased (assert statements, assert*() calls, pytest.raises/warns)
   - pytest.mark.skip / skipif / xfail added (decorator, module `pytestmark`, or pytest.skip()/xfail() call)
@@ -270,6 +272,79 @@ def _body_lines(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
     return [ast.unparse(s) for s in body]
 
 
+# --------------------------------------------------------------------------- library code: target dependency stubs
+
+IMPORT_ERRORS = {"ImportError", "ModuleNotFoundError"}
+
+
+def _module_root(dep: str) -> str:
+    return dep.strip().lower().replace("-", "_").split(".")[0]
+
+
+def _imports_dep(node: ast.AST, root: str) -> bool:
+    for x in ast.walk(node):
+        if isinstance(x, ast.Import) and any(a.name.split(".")[0] == root for a in x.names):
+            return True
+        if isinstance(x, ast.ImportFrom) and (x.module or "").split(".")[0] == root and not x.level:
+            return True
+    return False
+
+
+def _catches_import_error(h: ast.ExceptHandler) -> bool:
+    names = []
+    if isinstance(h.type, ast.Name):
+        names = [h.type.id]
+    elif isinstance(h.type, ast.Attribute):
+        names = [h.type.attr]
+    elif isinstance(h.type, ast.Tuple):
+        names = [e.id if isinstance(e, ast.Name) else getattr(e, "attr", "") for e in h.type.elts]
+    return h.type is None or bool(IMPORT_ERRORS & set(names))
+
+
+def _key_names_dep(node: ast.AST, root: str) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.split(".")[0] == root
+
+
+def _is_sys_modules(node: ast.AST) -> bool:
+    return isinstance(node, ast.Attribute) and node.attr == "modules" and isinstance(node.value, ast.Name) \
+        and node.value.id == "sys"
+
+
+def dependency_stubs(source: str | None, dep: str) -> list[str]:
+    """Places in library code that make the target dependency optional or fake it:
+    try/except ImportError around its import, or sys.modules injection under its name."""
+    if not source:
+        return []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    root = _module_root(dep)
+    found = []
+    for x in ast.walk(tree):
+        if isinstance(x, ast.Try) and any(_catches_import_error(h) for h in x.handlers) \
+                and any(_imports_dep(b, root) for b in x.body):
+            found.append(f"line {x.lineno}: try/except ImportError around `import {root}`")
+        if isinstance(x, (ast.Assign, ast.AugAssign)):
+            targets = x.targets if isinstance(x, ast.Assign) else [x.target]
+            for t in targets:
+                if isinstance(t, ast.Subscript) and _is_sys_modules(t.value) and _key_names_dep(t.slice, root):
+                    found.append(f"line {x.lineno}: sys.modules[{t.slice.value!r}] assignment")
+        if isinstance(x, ast.Call):
+            f = x.func
+            if isinstance(f, ast.Attribute) and _is_sys_modules(f.value) and f.attr in ("setdefault", "update", "__setitem__"):
+                keys = [x.args[0]] if x.args else []
+                if f.attr == "update" and x.args and isinstance(x.args[0], ast.Dict):
+                    keys = list(x.args[0].keys)
+                if any(k is not None and _key_names_dep(k, root) for k in keys):
+                    found.append(f"line {x.lineno}: sys.modules.{f.attr}({root!r} ...)")
+            if isinstance(f, ast.Attribute) and f.attr == "dict" and x.args and _is_sys_modules(x.args[0]) \
+                    and len(x.args) > 1 and isinstance(x.args[1], ast.Dict) \
+                    and any(k is not None and _key_names_dep(k, root) for k in x.args[1].keys):
+                found.append(f"line {x.lineno}: patch.dict(sys.modules, {{{root!r}: ...}})")
+    return found
+
+
 # --------------------------------------------------------------------------- per-file checks
 
 def _check_python(path: str, old: str | None, new: str | None, res: GuardResult) -> None:
@@ -372,9 +447,17 @@ def _pytest_config(name: str, text: str | None) -> object:
         return ("unparseable", text)
 
 
-def check_changes(changes: list[FileChange]) -> GuardResult:
+def check_changes(changes: list[FileChange], target_dependency: str | None = None) -> GuardResult:
     res = GuardResult(ok=True)
     for ch in sorted(changes, key=lambda c: c.path):
+        if target_dependency and ch.path.endswith(".py") and not _is_test_path(ch.path):
+            new_stubs = dependency_stubs(ch.new, target_dependency)
+            if len(new_stubs) > len(dependency_stubs(ch.old, target_dependency)):
+                res.rejections.append(Finding(
+                    "dependency_stubbed", ch.path,
+                    f"remove the code in {ch.path} that makes `{target_dependency}` optional or fakes it "
+                    f"({'; '.join(new_stubs)}): never stub, mock or make the target dependency optional in "
+                    "library code"))
         name = Path(ch.path).name
         if name == "conftest.py":
             if ch.old is None:
@@ -412,9 +495,10 @@ def changes_from_worktree(wt_path: Path, base: str, paths: list[str]) -> list[Fi
     return out
 
 
-def guard_check(wt, diff) -> GuardResult:
-    """Guard a repair: `wt` is a repair.Worktree, `diff` its repair.RepairDiff."""
-    return check_changes(changes_from_worktree(wt.path, wt.base, [p for p, _, _ in diff.files]))
+def guard_check(wt, diff, target_dependency: str | None = None) -> GuardResult:
+    """Guard a repair: `wt` is a repair.Worktree, `diff` its repair.RepairDiff; `target_dependency` the package
+    name from the DriftSpec, checked for stubbing in library code."""
+    return check_changes(changes_from_worktree(wt.path, wt.base, [p for p, _, _ in diff.files]), target_dependency)
 
 
 if __name__ == "__main__":

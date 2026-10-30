@@ -64,6 +64,18 @@ class ValueChange(_Model):
     notes: str = ""
 
 
+class TargetDependency(_Model):
+    """The upgraded package the migration targets, e.g. name="openai", constraint=">=1,<2"."""
+
+    name: str
+    constraint: str
+    source: str = ""  # "changelog" (stated there) or "cli" (--target-dep)
+
+    @property
+    def requirement(self) -> str:
+        return f"{self.name}{self.constraint}"
+
+
 class DriftSpec(_Model):
     api: str
     from_version: str
@@ -75,6 +87,7 @@ class DriftSpec(_Model):
     fields_renamed: list[FieldRenamed] = Field(default_factory=list)
     type_changes: list[TypeChange] = Field(default_factory=list)
     value_changes: list[ValueChange] = Field(default_factory=list)
+    target_dependency: TargetDependency | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> DriftSpec:

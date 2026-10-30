@@ -1,11 +1,41 @@
 {
-  "_comment": "Remote target repo (owner/name) -> the DriftZero benchmark that holds its hold-out tests. Hold-outs never live in the target.",
+  "_comment": "Per-target config. Key: GitHub owner/name (remote targets) or the benchmark path (local). holdout: hold-out dir in DriftZero; holdout_name: dir name it gets in the sandbox; holdout_requirements: pip requirements the hold-outs need (installed only in verify); validated_against: the target-dependency pin the hold-outs were validated against; repair_rules: target-specific hard rules appended to the generic ones ({from_version}/{to_version} filled in).",
   "ddavarma/fleet-telemetry-v1": {
     "benchmark": "benchmarks/robotics_telemetry_drift",
-    "holdout": "benchmarks/robotics_telemetry_drift/holdout_v2"
+    "holdout": "benchmarks/robotics_telemetry_drift/holdout_v2",
+    "holdout_name": "holdout_v2",
+    "holdout_requirements": [],
+    "validated_against": null,
+    "repair_rules": [
+      "Fixture data must be converted to the {to_version} shape, not dual-format. The `200` response `example` of `GET /fleet/telemetry` in `openapi_v2.json` is exactly the existing v1 fixture expressed in v2 (same robots and poses). Use it as `tests/fixtures/fleet_v2.json` and point `tests/conftest.py` at it.",
+      "Euler angles and a scalar `noise` can remain as derived values computed from the quaternion and covariance.",
+      "Add a **health alert**: carry `health` on the parsed frame and raise an alert of kind `\"health\"` when `health < 0.5` (module constant `MIN_HEALTH = 0.5`, overridable like the other thresholds). This is the only reason an existing test's expected alert set or count may change, and only by *adding* the new health alerts. Add at least one dedicated test for it.",
+      "**Negative `qw`**: `q` and `-q` are the same rotation and the server does not canonicalise sign. Never assume `qw >= 0`. Use sign-invariant formulas (rotation matrix from q, `atan2` heading), normalise q defensively, and add a test that a quaternion and its negation give the same heading, tilt and rotation. Robot `amr-03` in the fixture has `qw ≈ -0.99993` with heading 359°.",
+      "Uncertainty: derive the scalar position sigma as `sqrt(trace(P_pos) / 3)` where `P_pos = covariance[0:3][0:3]`, so isotropic fixtures keep the same fusion weights and noise alerts as before. Validate the covariance shape (6x6)."
+    ]
   },
   "ddavarma/JobTracker-driftzero-test": {
     "benchmark": "benchmarks/jobtracker_openai_v1",
-    "holdout": "benchmarks/jobtracker_openai_v1/holdout_v2"
+    "holdout": "benchmarks/jobtracker_openai_v1/holdout_v2",
+    "holdout_name": "holdout_v2",
+    "holdout_requirements": [
+      "respx>=0.21,<0.23"
+    ],
+    "validated_against": "openai>=1,<2",
+    "repair_rules": []
+  },
+  "benchmarks/robotics_telemetry_drift": {
+    "benchmark": "benchmarks/robotics_telemetry_drift",
+    "holdout": "benchmarks/robotics_telemetry_drift/holdout_v2",
+    "holdout_name": "holdout_v2",
+    "holdout_requirements": [],
+    "validated_against": null,
+    "repair_rules": [
+      "Fixture data must be converted to the {to_version} shape, not dual-format. The `200` response `example` of `GET /fleet/telemetry` in `openapi_v2.json` is exactly the existing v1 fixture expressed in v2 (same robots and poses). Use it as `tests/fixtures/fleet_v2.json` and point `tests/conftest.py` at it.",
+      "Euler angles and a scalar `noise` can remain as derived values computed from the quaternion and covariance.",
+      "Add a **health alert**: carry `health` on the parsed frame and raise an alert of kind `\"health\"` when `health < 0.5` (module constant `MIN_HEALTH = 0.5`, overridable like the other thresholds). This is the only reason an existing test's expected alert set or count may change, and only by *adding* the new health alerts. Add at least one dedicated test for it.",
+      "**Negative `qw`**: `q` and `-q` are the same rotation and the server does not canonicalise sign. Never assume `qw >= 0`. Use sign-invariant formulas (rotation matrix from q, `atan2` heading), normalise q defensively, and add a test that a quaternion and its negation give the same heading, tilt and rotation. Robot `amr-03` in the fixture has `qw ≈ -0.99993` with heading 359°.",
+      "Uncertainty: derive the scalar position sigma as `sqrt(trace(P_pos) / 3)` where `P_pos = covariance[0:3][0:3]`, so isotropic fixtures keep the same fusion weights and noise alerts as before. Validate the covariance shape (6x6)."
+    ]
   }
 }

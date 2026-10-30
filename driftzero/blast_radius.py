@@ -106,6 +106,9 @@ def _template_re(template: str) -> re.Pattern[str]:
     return re.compile("".join("[^/]+" if p.startswith("{") else re.escape(p) for p in parts))
 
 
+DOTTED_RE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
+
+
 class _Probes:
     """What to look for in code, derived from the DriftSpec."""
 
@@ -114,12 +117,16 @@ class _Probes:
         self.by_literal: dict[str, list[str]] = defaultdict(list)
         self.value_old: dict[str, str] = {}
         self.endpoints: list[tuple[str, re.Pattern[str], str, re.Pattern[str], str]] = []
+        self.by_dotted: dict[str, list[str]] = defaultdict(list)  # "openai.Model.list" -> probe ids
         for f in spec.fields_removed:
             self.by_leaf[_leaf(f.path)].append(f"removed:{f.schema_name}.{f.path}")
+            self.by_dotted[f"{f.schema_name}.{f.path}"].append(f"removed:{f.schema_name}.{f.path}")
         for f in spec.fields_renamed:
             self.by_leaf[_leaf(f.old_path)].append(f"renamed:{f.schema_name}.{f.old_path}")
+            self.by_dotted[f"{f.schema_name}.{f.old_path}"].append(f"renamed:{f.schema_name}.{f.old_path}")
         for f in spec.type_changes:
             self.by_leaf[_leaf(f.path)].append(f"type:{f.schema_name}.{f.path}")
+            self.by_dotted[f"{f.schema_name}.{f.path}"].append(f"type:{f.schema_name}.{f.path}")
         for v in spec.value_changes:
             pid = f"value:{v.schema_name}.{v.path}={v.old}"
             self.by_leaf[_leaf(v.path)].append(pid)
@@ -128,6 +135,17 @@ class _Probes:
         for e in spec.endpoints_renamed:
             self.endpoints.append((f"endpoint:{e.method} {e.old}", _template_re(e.old), e.old,
                                    _template_re(e.new), e.new))
+
+    def dotted_hits(self, s: str) -> list[str]:
+        """A dotted-path string naming a changed API element, e.g. patch("openai.Model.list") or
+        "openai.Model.list.something" for a removed/renamed `openai` schema entry `Model.list`."""
+        if not DOTTED_RE.fullmatch(s):
+            return []
+        hits = []
+        for key, pids in self.by_dotted.items():
+            if s == key or s.startswith(key + "."):
+                hits += pids
+        return hits
 
     def endpoint_hits(self, s: str) -> list[str]:
         """Path literals that belong to an old endpoint but not to its replacement."""
@@ -242,6 +260,9 @@ class _Index:
             mod = _Module(rel, dotted, is_init, _is_test_file(rel), tree)
             self.modules[rel] = mod
             self.by_dotted[dotted] = mod
+            full = rel[:-3].replace("/", ".").removesuffix(".__init__")
+            if full != dotted:  # src layout: also importable as src.<pkg> when tests put the repo root on sys.path
+                self.by_dotted.setdefault(full, mod)
         for mod in self.modules.values():
             self._collect_symbols(mod)
             self._collect_imports(mod)
@@ -462,6 +483,13 @@ def _scan_symbol(idx: _Index, sym: _Symbol, probes: _Probes, data_files: dict[st
                 matches.append(Match(probe=pid, kind="literal", line=line, text=s))
             for pid in probes.endpoint_hits(s):
                 matches.append(Match(probe=pid, kind="endpoint", line=line, text=s))
+            for pid in probes.dotted_hits(s):
+                matches.append(Match(probe=pid, kind="dotted_string", line=line, text=s))
+            if DOTTED_RE.fullmatch(s):  # "pkg.module.Symbol" strings (mock.patch targets) reference repo symbols
+                head, _, attr = s.rpartition(".")
+                res = idx.resolve_attr(head, attr) if head in idx.by_dotted else None
+                if res and res[0] == "sym":
+                    link(res[1], "ref", line, "string")
             for rel in data_files:
                 if s and (s == rel or rel == s.lstrip("./") or rel.endswith("/" + s.lstrip("./"))):
                     link(rel, "data", line)
@@ -497,6 +525,12 @@ def analyze(repo: str | Path, spec: DriftSpec) -> BlastRadius:
         edges.extend(e)
         if sym.cls:
             edges.append(Edge(src=sym.cls, dst=sym.id, kind="member", line=sym.line))
+            if sym.kind == "test":  # unittest: every test method runs after its class's setUp/setUpClass
+                cls_qual = sym.name.rsplit(".", 1)[0]
+                for hook in ("setUp", "setUpClass", "asyncSetUp"):
+                    hook_id = f"{sym.file}::{cls_qual}.{hook}"
+                    if hook_id in idx.symbols:
+                        edges.append(Edge(src=sym.id, dst=hook_id, kind="fixture", line=sym.line, detail=hook))
     for mod in idx.modules.values():
         for alias, (target, attr, line) in mod.imports.items():
             if attr is not None:
@@ -559,7 +593,7 @@ def analyze(repo: str | Path, spec: DriftSpec) -> BlastRadius:
 
 _EVIDENCE = {
     "subscript": '["{}"]', "get": '.get("{}")', "attribute": ".{}", "keyword": "{}=",
-    "field_def": "{}: …", "dict_key": '{{"{}": …}}', "endpoint": '"{}"', "literal": '"{}"',
+    "field_def": "{}: …", "dict_key": '{{"{}": …}}', "endpoint": '"{}"', "literal": '"{}"', "dotted_string": '"{}"',
 }
 
 

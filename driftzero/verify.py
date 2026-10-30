@@ -121,11 +121,11 @@ def _suite(name: str, cmd: list[str], code: int, out: str, err: str, xml: str | 
                        **_junit_counts(xml))
 
 
-def pytest_commands(xml_dir: str) -> tuple[list[str], list[str]]:
+def pytest_commands(xml_dir: str, holdout_name: str = "holdout_v2") -> tuple[list[str], list[str]]:
     """The two verification commands, run from the project directory."""
     agent = ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--junitxml={xml_dir}/agent.xml", "tests/"]
     holdout = ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--noconftest", "-c", "/dev/null",
-               "--rootdir", ".", f"--junitxml={xml_dir}/holdout.xml", "holdout_v2/"]
+               "--rootdir", ".", f"--junitxml={xml_dir}/holdout.xml", f"{holdout_name}/"]
     return agent, holdout
 
 
@@ -149,10 +149,10 @@ def resolve_holdout(worktree: str | Path, holdout_dir: str | Path | None = None)
     return holdout_dir, os.path.relpath(holdout_dir.parent, root)
 
 
-def _tar_bytes(worktree: Path, holdout_dir: Path, project_rel: str) -> bytes:
+def _tar_bytes(worktree: Path, holdout_dir: Path, project_rel: str, holdout_name: str | None = None) -> bytes:
     """gzip tar of the worktree (incl. its .git; in a git worktree that is a gitdir pointer file, not a
-    standalone repo) with the hold-outs placed at <project>/holdout_v2, replacing anything the agent put there."""
-    holdout_arc = f"wt/{project_rel}/{holdout_dir.name}"
+    standalone repo) with the hold-outs placed at <project>/<holdout_name>, replacing anything the agent put there."""
+    holdout_arc = f"wt/{project_rel}/{holdout_name or holdout_dir.name}"
 
     def keep(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
         parts = Path(info.name).parts
@@ -175,16 +175,28 @@ def _tail(text: str, n: int = 40) -> str:
 
 
 def verify_in_modal(worktree: str | Path, holdout_dir: str | Path | None = None, *, project_rel: str | None = None,
+                    holdout_name: str | None = None, holdout_requirements: list[str] | tuple = (),
+                    target_requirement: str | None = None,
                     on_line=lambda s: print(s, flush=True)) -> VerifyResult:
-    """`project_rel`: the project inside the worktree; by default inferred from where the hold-outs live."""
+    """`project_rel`: the project inside the worktree; by default inferred from where the hold-outs live.
+
+    Installs the target's declared dependencies together with `target_requirement` (strict: a stale pin fails),
+    then the hold-outs' own `holdout_requirements`, before running the two suites.
+    """
     import modal
+
+    from driftzero.env import install_plan
 
     worktree = Path(worktree).resolve()
     holdout_dir, inferred = resolve_holdout(worktree, holdout_dir)
     project_rel = project_rel or inferred
-    payload = _tar_bytes(worktree, holdout_dir, project_rel)
+    holdout_name = holdout_name or holdout_dir.name
+    payload = _tar_bytes(worktree, holdout_dir, project_rel, holdout_name)
     project = f"{REMOTE_ROOT}/wt/{project_rel}"
-    agent_cmd, holdout_cmd = pytest_commands("/tmp")
+    agent_cmd, holdout_cmd = pytest_commands("/tmp", holdout_name)
+    plan = install_plan(worktree / project_rel, target_requirement)
+    if holdout_requirements:
+        plan.append(list(holdout_requirements))
 
     start = time.monotonic()
     image = modal.Image.debian_slim(python_version=PY_VERSION).pip_install("pytest", "numpy", "setuptools", "wheel")
@@ -202,10 +214,18 @@ def verify_in_modal(worktree: str | Path, holdout_dir: str | Path | None = None,
         code, out, err = run(["tar", "xzf", "/tmp/wt.tar.gz", "-C", REMOTE_ROOT], REMOTE_ROOT)
         if code:
             raise RuntimeError(f"extract failed: {err}")
-        install = ["python", "-m", "pip", "install", "-q", "--no-build-isolation", "-e", project]
-        icode, iout, ierr = run(install, REMOTE_ROOT)
-        setup = {"command": install, "exit_code": icode, "output": _tail(iout + ierr)}
-        on_line(f"pip install -e: exit {icode}")
+        steps, icode = [], 0
+        for args in plan:
+            cmd = ["python", "-m", "pip", "install", "-q", "--disable-pip-version-check",
+                   *(["--no-build-isolation"] if "-e" in args else []), *args]
+            code, out, err = run(cmd, project)
+            steps.append({"command": cmd, "exit_code": code, "output": _tail(out + err, 25)})
+            on_line(f"pip install {' '.join(args)[:90]}: exit {code}")
+            if code:
+                icode = code
+                break
+        setup = {"command": [s["command"] for s in steps], "exit_code": icode,
+                 "output": "\n".join(s["output"] for s in steps if s["exit_code"]) or "", "steps": steps}
 
         suites = []
         for name, cmd in (("agent", agent_cmd), ("holdout", holdout_cmd)):
@@ -226,19 +246,23 @@ def verify_in_modal(worktree: str | Path, holdout_dir: str | Path | None = None,
 
 
 def verify_local(worktree: str | Path, holdout_dir: str | Path | None = None, *, project_rel: str | None = None,
+                 holdout_name: str | None = None, holdout_requirements: list[str] | tuple = (),
+                 target_requirement: str | None = None,
                  python: str = sys.executable, on_line=lambda s: print(s, flush=True)) -> VerifyResult:
-    """Same two commands in a throwaway copy, with the current interpreter (needs pytest + numpy)."""
+    """Same two commands in a throwaway copy, with `python` as is: nothing is installed (pass the repair venv's
+    interpreter for an external target; hold-out requirements must already be present there)."""
     worktree = Path(worktree).resolve()
     holdout_dir, inferred = resolve_holdout(worktree, holdout_dir)
     project_rel = project_rel or inferred
+    holdout_name = holdout_name or holdout_dir.name
     start = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="driftzero-verify-") as tmp:
-        with tarfile.open(fileobj=io.BytesIO(_tar_bytes(worktree, holdout_dir, project_rel))) as tar:
+        with tarfile.open(fileobj=io.BytesIO(_tar_bytes(worktree, holdout_dir, project_rel, holdout_name))) as tar:
             tar.extractall(tmp, filter="data")
         project = Path(tmp) / "wt" / project_rel
         env = {**os.environ, "PYTHONPATH": str(project), "PYTHONDONTWRITEBYTECODE": "1"}
         suites = []
-        for name, cmd in zip(("agent", "holdout"), pytest_commands(tmp)):
+        for name, cmd in zip(("agent", "holdout"), pytest_commands(tmp, holdout_name)):
             cmd = [python, *cmd[1:]]
             p = subprocess.run(cmd, cwd=project, env=env, capture_output=True, text=True, timeout=CMD_TIMEOUT_S)
             xml_path = Path(tmp) / f"{name}.xml"

@@ -28,6 +28,8 @@ def migrate(
     changelog: Path = typer.Option(None, exists=True, dir_okay=False, help="Changelog; runs `driftzero diff` first."),
     openapi_v1: Path = typer.Option(None, "--openapi-v1", exists=True, dir_okay=False, help="Old OpenAPI document."),
     openapi_v2: Path = typer.Option(None, "--openapi-v2", exists=True, dir_okay=False, help="New OpenAPI document."),
+    target_dep: str = typer.Option(None, "--target-dep", help='Upgraded package + constraint, e.g. "openai>=1,<2"; '
+                                   "used when the changelog does not state one."),
     no_pr: bool = typer.Option(False, "--no-pr", help="Push the verified branch but don't open a PR."),
     max_iterations: int = typer.Option(3, help="Repair/verify attempts before giving up."),
     contributor: bool = typer.Option(False, "--contributor", help="Contributor mode (cheaper; Meta trains on it). Dev only."),
@@ -62,10 +64,16 @@ def migrate(
     if not spec:
         typer.echo("=== diff: changelog / OpenAPI -> DriftSpec")
         res_d = differ.diff(changelog, openapi_v1, openapi_v2)
+        try:
+            res_d.spec = differ.resolve_target_dependency(res_d.spec, target_dep)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc))
         runs = target_mod.home_dir() / ".driftzero" / "runs"
         runs.mkdir(parents=True, exist_ok=True)
         spec = runs / f"diff-{time.strftime('%Y%m%d-%H%M%S')}.driftspec.json"
         res_d.spec.dump(spec)
+        td = res_d.spec.target_dependency
+        typer.echo(f"target dependency: {td.requirement} (from the {td.source})" if td else "target dependency: none")
         n = sum(len(getattr(res_d.spec, c)) for c in differ.CATEGORIES)
         typer.echo(f"DriftSpec: {n} changes from {len(res_d.candidates)} OpenAPI candidates "
                    f"(+{len(res_d.model_added)} from the changelog, {len(res_d.restored)} restored) -> {spec}")
@@ -73,10 +81,21 @@ def migrate(
                    f"{res_d.latency_s:.1f}s")
         diff_info = {"cost": res_d.cost, "spec_path": str(spec), "candidates": len(res_d.candidates),
                      "model_added": res_d.model_added, "restored": res_d.restored, "latency_s": res_d.latency_s,
+                     "target_dependency": res_d.spec.target_dependency.model_dump() if res_d.spec.target_dependency else None,
                      "inputs": {"changelog": str(changelog) if changelog else None,
                                 "openapi_v1": str(openapi_v1) if openapi_v1 else None,
                                 "openapi_v2": str(openapi_v2) if openapi_v2 else None}}
 
+    if target_dep and diff_info is None:  # --spec given: apply --target-dep to it
+        try:
+            spec_obj = differ.resolve_target_dependency(DriftSpec.load(spec), target_dep)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc))
+        if spec_obj.target_dependency is not None:
+            runs = target_mod.home_dir() / ".driftzero" / "runs"
+            runs.mkdir(parents=True, exist_ok=True)
+            spec = runs / f"spec-{time.strftime('%Y%m%d-%H%M%S')}.driftspec.json"
+            spec_obj.dump(spec)
     res = loop_mod.repair_until_verified(repo, spec, max_iterations, local=local, contributor=contributor,
                                          diff_info=diff_info, command=command)
     if not res.passed:
@@ -199,12 +218,19 @@ def diff_cmd(
     openapi_v2: Path = typer.Option(None, "--openapi-v2", exists=True, dir_okay=False, help="OpenAPI document, new."),
     out: Path = typer.Option(..., help="Where to write the DriftSpec JSON."),
     compare: Path = typer.Option(None, exists=True, dir_okay=False, help="A reference DriftSpec to compare against."),
+    target_dep: str = typer.Option(None, "--target-dep", help='e.g. "openai>=1,<2"; used if the changelog states none.'),
 ) -> None:
     """Changelog / OpenAPI v1 -> v2 into a DriftSpec (deterministic diff + one muse-spark-1.3 merge call)."""
     from driftzero import differ
 
     res = differ.diff(changelog, openapi_v1, openapi_v2)
+    try:
+        res.spec = differ.resolve_target_dependency(res.spec, target_dep)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     res.spec.dump(out)
+    td = res.spec.target_dependency
+    typer.echo(f"target dependency: {td.requirement} (from the {td.source})" if td else "target dependency: none")
     n = sum(len(getattr(res.spec, c)) for c in differ.CATEGORIES)
     typer.echo(f"{out}: {n} changes ({len(res.candidates)} OpenAPI diff candidates, {len(res.model_added)} added from "
                f"the changelog, {len(res.restored)} restored after the model dropped them)")
