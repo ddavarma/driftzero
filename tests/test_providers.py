@@ -63,6 +63,7 @@ def test_missing_key_is_reported_without_leaking(monkeypatch):
 
 
 @pytest.mark.live
+@pytest.mark.skipif(os.getenv("DRIFTZERO_LIVE") != "1", reason="billed call; set DRIFTZERO_LIVE=1 to run")
 @pytest.mark.skipif(not os.getenv("META_API_KEY"), reason="META_API_KEY not set")
 def test_live_meta_responses_call(tmp_path):
     providers.get_client.cache_clear()

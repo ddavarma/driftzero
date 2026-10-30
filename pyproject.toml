@@ -26,4 +26,4 @@ packages = ["driftzero"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["live: makes a real, billed call to a model provider (needs keys in .env)"]
+markers = ["live: makes a real, billed call to a model provider (run with DRIFTZERO_LIVE=1; needs keys in .env)"]
