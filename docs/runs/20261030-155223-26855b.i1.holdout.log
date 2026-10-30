@@ -1,0 +1,22 @@
+$ python -m pytest -q -p no:cacheprovider --noconftest -c /dev/null --rootdir . --junitxml=/tmp/holdout.xml holdout_v2/
+# exit 1
+.......F                                                                 [100%]
+=================================== FAILURES ===================================
+_______________ test_health_outside_documented_range_is_rejected _______________
+
+    def test_health_outside_documented_range_is_rejected():
+        schema = SPEC["components"]["schemas"]["TelemetryFrame"]["properties"]["health"]
+        lo, hi = schema["minimum"], schema["maximum"]  # openapi_v2.json: health is 0..1
+        ok = copy.deepcopy(BY_ID["amr-01"])
+        assert parse_frame(ok).health == ok["health"]  # an in-range frame must parse (rules out vacuous passes)
+        for bad in (hi + 1.0, lo - 0.1, float("nan")):
+            payload = dict(ok, health=bad)
+>           with pytest.raises(TelemetryParseError):
+E           Failed: DID NOT RAISE TelemetryParseError
+
+holdout_v2/test_contract_v2.py:125: Failed
+=========================== short test summary info ============================
+FAILED holdout_v2/test_contract_v2.py::test_health_outside_documented_range_is_rejected
+1 failed, 7 passed in 0.12s
+
+--- stderr ---

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="8" time="0.125" timestamp="2026-10-30T19:54:45.206101+00:00" hostname="modal"><testcase classname="holdout_v2.test_contract_v2" name="test_client_requests_v2_paths" time="0.001" /><testcase classname="holdout_v2.test_contract_v2" name="test_v2_snapshot_parses_and_v1_version_is_rejected" time="0.000" /><testcase classname="holdout_v2.test_contract_v2" name="test_negative_qw_robots_heading_and_tilt" time="0.001" /><testcase classname="holdout_v2.test_contract_v2" name="test_health_alert_only_below_threshold" time="0.000" /><testcase classname="holdout_v2.test_contract_v2" name="test_noise_is_derived_from_covariance_trace" time="0.000" /><testcase classname="holdout_v2.test_contract_v2" name="test_v1_shaped_frame_is_rejected" time="0.000" /><testcase classname="holdout_v2.test_contract_v2" name="test_charging_schedule_unaffected" time="0.000" /><testcase classname="holdout_v2.test_contract_v2" name="test_health_outside_documented_range_is_rejected" time="0.000"><failure message="Failed: DID NOT RAISE TelemetryParseError">def test_health_outside_documented_range_is_rejected():
+        schema = SPEC["components"]["schemas"]["TelemetryFrame"]["properties"]["health"]
+        lo, hi = schema["minimum"], schema["maximum"]  # openapi_v2.json: health is 0..1
+        ok = copy.deepcopy(BY_ID["amr-01"])
+        assert parse_frame(ok).health == ok["health"]  # an in-range frame must parse (rules out vacuous passes)
+        for bad in (hi + 1.0, lo - 0.1, float("nan")):
+            payload = dict(ok, health=bad)
+&gt;           with pytest.raises(TelemetryParseError):
+E           Failed: DID NOT RAISE TelemetryParseError
+
+holdout_v2/test_contract_v2.py:125: Failed</failure></testcase></testsuite></testsuites>

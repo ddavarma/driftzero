@@ -107,7 +107,7 @@ which holds only the library, its tests, the two OpenAPI documents and the chang
 18 tests) written against API v1: Euler roll/pitch/yaw in degrees and a scalar position `noise`. API v2
 (`openapi_v2.json`, `CHANGELOG_v2.md`) switches to unit quaternions (sign not canonicalised, two robots have
 `qw < 0`), a 6×6 pose covariance, a required health score, and `/v2` paths. `driftspec_v2.json` is the hand-written
-DriftSpec. `charging.py` is a control module the change must not touch. `holdout_v2/` has 7 contract tests derived
+DriftSpec. `charging.py` is a control module the change must not touch. `holdout_v2/` has 8 contract tests derived
 only from the v2 spec and changelog. They are never shown to the agent, excluded from the blast radius, and run with
 `--noconftest -c /dev/null` so nothing in the worktree can influence them.
 
@@ -115,6 +115,7 @@ only from the v2 spec and changelog. They are never shown to the agent, excluded
 
 | run | iterations | guard | agent suite | hold-out | sandbox | cost | wall time |
 |---|---|---|---|---|---|---|---|
+| [changelog → PR #4 on fleet-telemetry-v1, `--review-fix`, reviewer v2.2](https://github.com/ddavarma/fleet-telemetry-v1/pull/4) (`20261030-155223-26855b`) | **2**: iteration 1 failed the new health-range hold-out (7/8), the redacted retry fixed it | ok, 13 review items | 22/22 | 8/8 | Modal, 4.5 s + 5.2 s | $0.68 (differ $0.026, review $0.040) | 234 s end to end |
 | [changelog → PR #3 on fleet-telemetry-v1, `--review-fix`, reviewer v2.1](https://github.com/ddavarma/fleet-telemetry-v1/pull/3) (`20261030-043600-9b46d7`) | 1 + 1 review-fix (no code change: all 4 findings justified) | ok, 15 review items | 23/23, re-verify 23/23 | 7/7, re-verify 7/7 | Modal, 4.7 s + 6.6 s | $0.84 (differ $0.019, review $0.065, fix pass $0.23) | 300 s end to end |
 | [changelog → PR #2 on fleet-telemetry-v1, `--review-fix`](https://github.com/ddavarma/fleet-telemetry-v1/pull/2) (`20261030-041743-ffdf04`) | 1 (+0: reviewer approved, no fix pass) | ok, 14 review items | 25/25 | 7/7 | Modal, 3.8 s | $0.67 (differ $0.026, review $0.068) | 260 s end to end |
 | [changelog → PR on fleet-telemetry-v1](https://github.com/ddavarma/fleet-telemetry-v1/pull/1) (`20261030-031042-391b51`) | 1 | ok; flagged `yaw == 87.0` loosened to `approx`, stale test name | 25/25 | 7/7 | Modal, 4.1 s | $0.59 (incl. $0.024 differ) | 175 s + 18 s differ |
@@ -157,6 +158,14 @@ Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md
     observations of requested design choices, 4 debatable, and 2 spurious (one accused a comment of an unsupported
     claim that is actually in `openapi_v2.json`, which the reviewer is not given). v2 misses things; v2.1 finds them
     and also invents some. Its confidence scores carry signal but are not calibrated.
+  - *v2.2* also gives the reviewer the repair agent's hard rules as "agreed migration policy" (don't report what the
+    policy requires; do report violations and gaps). Over 9 runs it removed the noise: on fleet-telemetry-v1 PR #1,
+    10 non-defaults findings were 8 real reports (4 distinct defects), 2 debatable, 0 spurious, 0 complaints about the
+    requested compatibility layer. **But the catch rate went down**: the PR #2 rounding was mentioned in 2/3 runs and
+    never reached 0.5 (v2.1: 2/3 at ≥ 0.6), with the reviewer reasoning that the policy's permission to keep derived
+    Euler values covers rounding them; the defaults finding fell to 1/3 (DriftZero PR #1) and 2/3 (fleet-telemetry-v1
+    PR #1) at ≥ 0.5. DriftZero ships v2.2. Neither version is strictly better; the numbers for all three are in
+    [`docs/reviewer_eval.md`](docs/reviewer_eval.md).
   - Caveats: 3 runs per cell, one model, one effort level, two diffs; no false-positive measurement. The v2 design
     (test context, claims rule) was chosen after seeing v1 miss this case. The reviewer's own `line_hint`s are
     unreliable (off by 1–12 lines), so inline comments are anchored by matching the quoted evidence to the diff.
@@ -176,7 +185,7 @@ Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md
   that one changelog; a second scenario (e.g. float dollars → integer cents) is not built yet.
 - **Hold-outs need a mapping.** A remote target gets hold-out tests only if `benchmarks/targets.json` lists it.
   Without them verification does not run and the loop never reports success, so no PR is opened (fails closed).
-- **Hold-outs are only as strong as they are written.** 7 tests, written by hand from the spec. After a failed
+- **Hold-outs are only as strong as they are written.** 8 tests, written by hand from the spec (the 8th, health range, was added after the reviewer found that two Muse repairs accepted `health=2.0`; it then caught that defect live in PR #4's first iteration). Earlier results in the table above ran against 7. After a failed
   iteration the agent sees their names and one-line messages, which is enough to target them.
 - **Guard rules are syntactic.** It counts asserts and compares literals. It cannot tell a legitimately updated
   expected value from a wrong one (it reports them for review), and it does not police non-test code.
