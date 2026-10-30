@@ -1,0 +1,6 @@
+$ python -m pytest -q -p no:cacheprovider --junitxml=/tmp/agent.xml tests/
+# exit 0
+.........................                                                [100%]
+25 passed in 0.12s
+
+--- stderr ---

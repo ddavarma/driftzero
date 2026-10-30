@@ -53,10 +53,27 @@ medium, low, low. Clean-batch cost: $0.1680 for 6 runs ($0.0280 per review).
 Across every v2 run so far (clean 6 + posted 2 + partial 5): rounding reported on DriftZero PR #1 in **7/7** runs;
 defaults reported in **6/7** on DriftZero PR #1 but only **2/6** on fleet-telemetry-v1 PR #1.
 
+## On a fresh diff: fleet-telemetry-v1 PR #2
+
+The live `driftzero migrate --review-fix` run (task `20261030-041743-ffdf04`) produced a new repair that **again
+rounds the derived Euler angles** (`roll=round(eroll, 3)`, same for pitch and yaw), this time with the comment "wire
+carries ~6-decimal quaternions, so round to millidegrees (well within v1's 0.1-degree precision)". The unchanged
+`frame.pose.yaw == 87.0` test was in the reviewer's context. Reviewer v2 (`high`, one run) **approved with no
+findings**, so `--review-fix` had nothing to act on. Its reasoning drafted the finding ("rounding is magic constant
+to satisfy exact equality test, not required by spec"), half-accepted the new justification because the fixture
+really carries 6-decimal quaternions, and then applied the prompt's own rule: "Given uncertainty, safest is to
+approve with no findings, as per 'Report nothing you are unsure is real'." It also asked itself "Would an empty
+findings list with approve be considered incorrect by evaluator?". Full trace:
+[`runs/20261030-041743-ffdf04.jsonl`](runs/20261030-041743-ffdf04.jsonl) (`review` event).
+
+So on the one unseen diff with the smell, v2 caught it **0/1**. The 3/3 above is on the diff whose miss motivated
+v2's design; this run is the more honest signal of generalisation, and it is a miss.
+
 ## Reading
 
-- The rounding is a reliable catch for v2 on this diff: every run that saw it reported it. What varies is the
-  label and severity.
+- The rounding is a reliable catch for v2 on DriftZero PR #1: every run that saw it reported it, varying only in
+  label and severity. On a fresh diff with the same smell and a more plausible justification (PR #2) it was missed,
+  so the 3/3 does not transfer.
 - The defaults issue is reliable on one PR and mostly missed on the other. On fleet-telemetry-v1 the reviewer
   approved with no findings in 4 of 6 runs, so a single "approve" from it is weak evidence.
 - Small numbers (3 runs per cell, one model, one effort level, two diffs). This measures run-to-run variance on

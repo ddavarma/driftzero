@@ -1,0 +1,70 @@
+{
+  "passed": true,
+  "backend": "modal",
+  "project_rel": ".",
+  "agent": {
+    "name": "agent",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--junitxml=/tmp/agent.xml",
+      "tests/"
+    ],
+    "exit_code": 0,
+    "stdout": ".........................                                                [100%]\n25 passed in 0.12s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"25\" time=\"0.123\" timestamp=\"2026-10-30T08:20:46.953386+00:00\" hostname=\"modal\"><testcase classname=\"tests.test_alerts\" name=\"test_tilted_robot_raises_tilt_alert\" time=\"0.001\" /><testcase classname=\"tests.test_alerts\" name=\"test_noisy_localisation_raises_noisy_alert\" time=\"0.000\" /><testcase classname=\"tests.test_alerts\" name=\"test_low_battery_and_healthy_robot\" time=\"0.000\" /><testcase classname=\"tests.test_alerts\" name=\"test_fleet_summary\" time=\"0.000\" /><testcase classname=\"tests.test_alerts\" name=\"test_low_health_raises_health_alert\" time=\"0.000\" /><testcase classname=\"tests.test_alerts\" name=\"test_health_at_threshold_is_ok\" time=\"0.000\" /><testcase classname=\"tests.test_alerts\" name=\"test_health_threshold_is_overridable\" time=\"0.000\" /><testcase classname=\"tests.test_charging\" name=\"test_charge_minutes\" time=\"0.000\" /><testcase classname=\"tests.test_charging\" name=\"test_plan_charging_emptiest_first_and_shares_docks\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_parse_frame_reads_pose_and_noise\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_parse_batch_rejects_other_api_version\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_missing_field_raises_parse_error\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_client_hits_v1_paths\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_parse_frame_reads_health_and_covariance\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_bad_covariance_shape_raises_parse_error\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_missing_health_raises_parse_error\" time=\"0.000\" /><testcase classname=\"tests.test_fusion\" name=\"test_fused_position_favours_low_noise\" time=\"0.001\" /><testcase classname=\"tests.test_fusion\" name=\"test_equal_noise_gives_plain_mean\" time=\"0.001\" /><testcase classname=\"tests.test_fusion\" name=\"test_heading_mean_handles_wraparound\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_zero_angles_is_identity\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_rotation_is_orthonormal\" time=\"0.001\" /><testcase classname=\"tests.test_orientation\" name=\"test_yaw_90_points_along_map_y\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_heading_wraps_into_0_360\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_tilt_from_roll_and_pitch\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_quaternion_negation_gives_same_rotation\" time=\"0.000\" /></testsuite></testsuites>",
+    "tests": 25,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_s": 0.123
+  },
+  "holdout": {
+    "name": "holdout",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--noconftest",
+      "-c",
+      "/dev/null",
+      "--rootdir",
+      ".",
+      "--junitxml=/tmp/holdout.xml",
+      "holdout_v2/"
+    ],
+    "exit_code": 0,
+    "stdout": ".......                                                                  [100%]\n7 passed in 0.07s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"7\" time=\"0.071\" timestamp=\"2026-10-30T08:20:47.430025+00:00\" hostname=\"modal\"><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_client_requests_v2_paths\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_v2_snapshot_parses_and_v1_version_is_rejected\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_negative_qw_robots_heading_and_tilt\" time=\"0.001\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_health_alert_only_below_threshold\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_noise_is_derived_from_covariance_trace\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_v1_shaped_frame_is_rejected\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_charging_schedule_unaffected\" time=\"0.000\" /></testsuite></testsuites>",
+    "tests": 7,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_s": 0.071
+  },
+  "setup": {
+    "command": [
+      "python",
+      "-m",
+      "pip",
+      "install",
+      "-q",
+      "--no-build-isolation",
+      "-e",
+      "/work/wt/."
+    ],
+    "exit_code": 0,
+    "output": "\n[notice] A new release of pip is available: 25.2 -> 26.2.2\n[notice] To update, run: pip install --upgrade pip"
+  },
+  "wall_time_s": 3.8,
+  "sandbox_id": "sb-01M65YB8HMFY04QMVG2YQ2BV7R"
+}

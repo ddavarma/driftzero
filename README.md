@@ -113,6 +113,7 @@ only from the v2 spec and changelog. They are never shown to the agent, excluded
 
 | run | iterations | guard | agent suite | hold-out | sandbox | cost | wall time |
 |---|---|---|---|---|---|---|---|
+| [changelog → PR #2 on fleet-telemetry-v1, `--review-fix`](https://github.com/ddavarma/fleet-telemetry-v1/pull/2) (`20261030-041743-ffdf04`) | 1 (+0: reviewer approved, no fix pass) | ok, 14 review items | 25/25 | 7/7 | Modal, 3.8 s | $0.67 (differ $0.026, review $0.068) | 260 s end to end |
 | [changelog → PR on fleet-telemetry-v1](https://github.com/ddavarma/fleet-telemetry-v1/pull/1) (`20261030-031042-391b51`) | 1 | ok; flagged `yaw == 87.0` loosened to `approx`, stale test name | 25/25 | 7/7 | Modal, 4.1 s | $0.59 (incl. $0.024 differ) | 175 s + 18 s differ |
 | [`driftzero migrate`, local spec](https://github.com/ddavarma/driftzero/pull/1) (`20261030-023010-e61999`, draft, evidence only) | 1 | ok, 0 rejections, 17 review items | 30/30 | 7/7 | Modal, 7.3 s | $0.37 (986K in, 91% cached, 28K out) | 142 s end to end |
 | stage-4 repair + stage-5 verify (`20261030-014828-02a484`) | 1 | ok, 10 review items (guard run afterwards) | 21/21 | 7/7 | Modal, 13.4 s | $0.46 | 122 s repair |
@@ -138,7 +139,10 @@ Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md
     ([`docs/reviewer_eval.md`](docs/reviewer_eval.md)): it reported the rounding on DriftZero PR #1 in **3/3** runs
     (2 as `test_shaped_code`, 1 as `precision_loss`; severity medium or low), and the required-fields-with-defaults
     issue in **3/3** runs there but **0/3** on fleet-telemetry-v1 PR #1, where it approved with no findings every
-    time. Counting every v2 run so far: rounding 7/7, defaults 6/7 and 2/6.
+    time. Counting every v2 run on those two PRs: rounding 7/7, defaults 6/7 and 2/6. **On a fresh diff it missed
+    it:** fleet-telemetry-v1 PR #2 rounds the Euler angles again (with a more plausible "~6-decimal quaternions"
+    comment); v2 drafted the finding in its reasoning, then approved citing the prompt's "report nothing you are unsure
+    is real" rule, so `--review-fix` had nothing to act on.
   - Caveats: 3 runs per cell, one model, one effort level, two diffs; no false-positive measurement. The v2 design
     (test context, claims rule) was chosen after seeing v1 miss this case. The reviewer's own `line_hint`s are
     unreliable (off by 1–12 lines), so inline comments are anchored by matching the quoted evidence to the diff.
@@ -149,6 +153,9 @@ Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md
 - **Python only.** Blast radius, the guard and verification assume Python, `ast` and pytest. Impact analysis is
   static, with no type inference: method calls resolve by unique method name, and dynamic access (`getattr`,
   `**kwargs` payload plumbing) is invisible.
+- **`--review-fix` has not run live yet.** Its only live run got an `approve` from the reviewer, so no extra
+  iteration was triggered; the fix path (prompt, revert-on-failure, commit + second review, PR section) is covered by
+  offline tests only.
 - **One scenario.** Everything is proven on one API change in one domain. The differ has only been checked against
   that one changelog; a second scenario (e.g. float dollars → integer cents) is not built yet.
 - **Hold-outs need a mapping.** A remote target gets hold-out tests only if `benchmarks/targets.json` lists it.
