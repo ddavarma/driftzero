@@ -1,0 +1,20 @@
+$ python -m pytest -q -p no:cacheprovider --noconftest -c /dev/null --rootdir . --junitxml=/tmp/holdout.xml holdout_v2/
+# exit 0
+.......                                                                  [100%]
+=============================== warnings summary ===============================
+holdout_v2/test_contract_openai_v1.py::test_no_v0_resource_calls_remain
+  <unknown>:39: DeprecationWarning: invalid escape sequence '\{'
+
+holdout_v2/test_contract_openai_v1.py::test_no_v0_resource_calls_remain
+  <unknown>:42: DeprecationWarning: invalid escape sequence '\{'
+
+holdout_v2/test_contract_openai_v1.py::test_no_v0_resource_calls_remain
+  <unknown>:45: DeprecationWarning: invalid escape sequence '\{'
+
+holdout_v2/test_contract_openai_v1.py::test_no_v0_resource_calls_remain
+  <unknown>:48: DeprecationWarning: invalid escape sequence '\{'
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+7 passed, 4 warnings in 0.81s
+
+--- stderr ---

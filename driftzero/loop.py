@@ -88,6 +88,14 @@ def collection_errors(suite: verify_mod.SuiteResult, holdout_name: str | None = 
     return out[:MAX_COLLECTION_LINES]
 
 
+def same_requirement(a: str, b: str) -> bool:
+    """`openai>=1,<2` and `openai<2,>=1` are the same requirement."""
+    from packaging.requirements import Requirement
+
+    ra, rb = Requirement(a), Requirement(b)
+    return ra.name.lower() == rb.name.lower() and ra.specifier == rb.specifier
+
+
 def build_prior_failure(result: verify_mod.VerifyResult, holdout_name: str | None = None) -> str:
     """Failure context for the next repair pass after a failed verification."""
     parts: list[str] = []
@@ -169,7 +177,7 @@ def repair_until_verified(
             fh.write(json.dumps({"ts": time.time(), "event": "diff", "task_id": task_id,
                                  **{k: v for k, v in diff_info.items() if k != "cost"},
                                  "cost": diff_cost.as_dict() if diff_cost else None}, default=str) + "\n")
-    if target_req and cfg.validated_against and target_req != cfg.validated_against:
+    if target_req and cfg.validated_against and not same_requirement(target_req, cfg.validated_against):
         on_line(f"WARNING: hold-outs were validated against {cfg.validated_against}, this run pins {target_req}")
     python = sys.executable
     env_info = None

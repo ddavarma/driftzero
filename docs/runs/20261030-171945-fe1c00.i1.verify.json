@@ -1,0 +1,134 @@
+{
+  "passed": true,
+  "backend": "modal",
+  "project_rel": ".",
+  "agent": {
+    "name": "agent",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--junitxml=/tmp/agent.xml",
+      "tests/"
+    ],
+    "exit_code": 0,
+    "stdout": ".....                                                                    [100%]\n=============================== warnings summary ===============================\nsrc/JobTracker/chatbot.py:39\n  /work/wt/src/JobTracker/chatbot.py:39: DeprecationWarning: invalid escape sequence '\\{'\n    return ('Rate my email as an application email on a scale of 1 to 100. return a a json \\{\"score\": int\\}  Here is the mail body: ' + info )\n\nsrc/JobTracker/chatbot.py:42\n  /work/wt/src/JobTracker/chatbot.py:42: DeprecationWarning: invalid escape sequence '\\{'\n    return ('what is the company I appied? return a json \\{\"Company\": string\\} Here is the mail body: ' + info)\n\nsrc/JobTracker/chatbot.py:45\n  /work/wt/src/JobTracker/chatbot.py:45: DeprecationWarning: invalid escape sequence '\\{'\n    return ('what is the state of this application? return a json \\{\"State\": string\\} Here is the mail body: ' + info)\n\nsrc/JobTracker/chatbot.py:48\n  /work/wt/src/JobTracker/chatbot.py:48: DeprecationWarning: invalid escape sequence '\\{'\n    return ('what should be next step in the application process as an applicant? return a json \\{\"NextStep\": string\\} Here is the mail body: ' + info)\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n5 passed, 4 warnings in 0.94s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"5\" time=\"0.944\" timestamp=\"2026-10-30T21:21:16.900350+00:00\" hostname=\"modal\"><testcase classname=\"tests.test_chatbot.TestChatBot\" name=\"test_gen_prompt\" time=\"0.002\" /><testcase classname=\"tests.test_chatbot.TestChatGPT\" name=\"test_get_content_failed\" time=\"0.003\" /><testcase classname=\"tests.test_chatbot.TestChatGPT\" name=\"test_get_content_succeed\" time=\"0.007\" /><testcase classname=\"tests.test_utils.TestEmailMessage\" name=\"test_clenup_body\" time=\"0.002\" /><testcase classname=\"tests.test_utils.TestEmailMessage\" name=\"test_related_to_application\" time=\"0.001\" /></testsuite></testsuites>",
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_s": 0.944
+  },
+  "holdout": {
+    "name": "holdout",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--noconftest",
+      "-c",
+      "/dev/null",
+      "--rootdir",
+      ".",
+      "--junitxml=/tmp/holdout.xml",
+      "holdout_v2/"
+    ],
+    "exit_code": 0,
+    "stdout": ".......                                                                  [100%]\n=============================== warnings summary ===============================\nholdout_v2/test_contract_openai_v1.py::test_no_v0_resource_calls_remain\n  <unknown>:39: DeprecationWarning: invalid escape sequence '\\{'\n\nholdout_v2/test_contract_openai_v1.py::test_no_v0_resource_calls_remain\n  <unknown>:42: DeprecationWarning: invalid escape sequence '\\{'\n\nholdout_v2/test_contract_openai_v1.py::test_no_v0_resource_calls_remain\n  <unknown>:45: DeprecationWarning: invalid escape sequence '\\{'\n\nholdout_v2/test_contract_openai_v1.py::test_no_v0_resource_calls_remain\n  <unknown>:48: DeprecationWarning: invalid escape sequence '\\{'\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n7 passed, 4 warnings in 0.81s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"7\" time=\"0.816\" timestamp=\"2026-10-30T21:21:18.813603+00:00\" hostname=\"modal\"><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_no_v0_resource_calls_remain\" time=\"0.004\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_model_list_through_v1_client\" time=\"0.723\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_model_list_api_error_is_handled\" time=\"0.003\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_function_call_response_read_by_attribute\" time=\"0.012\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_non_function_reply_is_not_a_job_email\" time=\"0.004\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_api_error_is_caught_with_v1_error_classes\" time=\"0.026\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_requirements_allow_openai_v1\" time=\"0.019\" /></testsuite></testsuites>",
+    "tests": 7,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_s": 0.816
+  },
+  "setup": {
+    "command": [
+      [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "--disable-pip-version-check",
+        "-r",
+        "requirements.txt",
+        "openai<2,>=1"
+      ],
+      [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "--disable-pip-version-check",
+        "pytest"
+      ],
+      [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "--disable-pip-version-check",
+        "respx>=0.21,<0.23"
+      ]
+    ],
+    "exit_code": 0,
+    "output": "",
+    "steps": [
+      {
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-q",
+          "--disable-pip-version-check",
+          "-r",
+          "requirements.txt",
+          "openai<2,>=1"
+        ],
+        "exit_code": 0,
+        "output": ""
+      },
+      {
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-q",
+          "--disable-pip-version-check",
+          "pytest"
+        ],
+        "exit_code": 0,
+        "output": ""
+      },
+      {
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-q",
+          "--disable-pip-version-check",
+          "respx>=0.21,<0.23"
+        ],
+        "exit_code": 0,
+        "output": ""
+      }
+    ]
+  },
+  "wall_time_s": 14.5,
+  "sandbox_id": "sb-01M67B04NJRX2NG7G5BGE26S03"
+}

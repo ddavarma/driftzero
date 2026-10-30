@@ -1,0 +1,24 @@
+$ python -m pytest -q -p no:cacheprovider --junitxml=/tmp/agent.xml tests/
+# exit 0
+.....                                                                    [100%]
+=============================== warnings summary ===============================
+src/JobTracker/chatbot.py:39
+  /work/wt/src/JobTracker/chatbot.py:39: DeprecationWarning: invalid escape sequence '\{'
+    return ('Rate my email as an application email on a scale of 1 to 100. return a a json \{"score": int\}  Here is the mail body: ' + info )
+
+src/JobTracker/chatbot.py:42
+  /work/wt/src/JobTracker/chatbot.py:42: DeprecationWarning: invalid escape sequence '\{'
+    return ('what is the company I appied? return a json \{"Company": string\} Here is the mail body: ' + info)
+
+src/JobTracker/chatbot.py:45
+  /work/wt/src/JobTracker/chatbot.py:45: DeprecationWarning: invalid escape sequence '\{'
+    return ('what is the state of this application? return a json \{"State": string\} Here is the mail body: ' + info)
+
+src/JobTracker/chatbot.py:48
+  /work/wt/src/JobTracker/chatbot.py:48: DeprecationWarning: invalid escape sequence '\{'
+    return ('what should be next step in the application process as an applicant? return a json \{"NextStep": string\} Here is the mail body: ' + info)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+5 passed, 4 warnings in 0.94s
+
+--- stderr ---

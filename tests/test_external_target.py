@@ -218,3 +218,10 @@ def test_blast_radius_links_unittest_setup_patch_strings_and_src_layout(tmp_path
     assert "tests/test_bot.py::TestPlain::test_helper" not in br.tests
     assert any(e.kind == "fixture" and e.detail == "setUp" for e in br.edges)
     assert any(e.kind == "ref" and e.detail == "string" and e.dst == "src/app/bot.py::Bot" for e in br.edges)
+
+
+def test_validated_against_compares_requirements_not_strings():
+    assert loop.same_requirement("openai>=1,<2", "openai<2,>=1")
+    assert loop.same_requirement("OpenAI>=1,<2", "openai >=1, <2")
+    assert not loop.same_requirement("openai>=1,<2", "openai>=1")
+    assert not loop.same_requirement("openai>=1,<2", "httpx>=1,<2")

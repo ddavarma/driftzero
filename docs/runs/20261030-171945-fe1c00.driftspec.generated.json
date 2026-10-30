@@ -1,0 +1,400 @@
+{
+  "api": "openai",
+  "from_version": "v0",
+  "to_version": "v1.0.0",
+  "summary": "v1 is a total rewrite requiring explicit client instantiation via `client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])` instead of global state, changing all response objects from dicts to pydantic models requiring attribute access (`completion.choices[0].text`) with `model.model_dump()`/`model_dump_json()` conversion, and adding auto-retry with backoff, proper types, and automatic iteration for all `list()` methods replacing `.auto_paging_iter()`. All resource methods moved under `client` (e.g. `openai.Completion.create()` -> `client.completions.create()`, `openai.Image.create()` -> `client.images.generate()`, `openai.File.download()` -> `client.files.retrieve_content()`, `openai.FineTune.stream_events()` -> `client.fine_tunes.list_events(stream=True)`), config/module names changed (`api_base` -> `base_url`, `proxy` -> `proxies`, `InvalidRequestError` -> `BadRequestError`, `api_resources` -> `resources`), and all `a*` methods were removed in favor of the async client. Removed globals/classes/helpers (`api_key_path`, `app_info`, `debug`, `log`, `OpenAIError`, `ErrorObject`, `Customer`, `api_version`, `verify_ssl_certs`, `api_type`, `enable_telemetry`, `ca_bundle_path`, `requestssession`/`aiosession`, `Deployment`, `Engine`, `Audio.transcribe_raw`/`translate_raw`, `File.find_matching_files`, `embeddings_utils`) with replacements to `httpx`, `azure-mgmt-cognitiveservices` for Deployments, and the cookbook for embeddings_utils, plus Weights and Biases CLI split to its own package. Global `openai.*` client access remains only for REPLs/notebooks and application code must instantiate `OpenAI()` to avoid race conditions and allow mocking and connection cleanup.",
+  "endpoints_renamed": [
+    {
+      "method": "transcribe",
+      "old": "openai.Audio.transcribe()",
+      "new": "client.audio.transcriptions.create()",
+      "notes": ""
+    },
+    {
+      "method": "translate",
+      "old": "openai.Audio.translate()",
+      "new": "client.audio.translations.create()",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.ChatCompletion.create()",
+      "new": "client.chat.completions.create()",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.Completion.create()",
+      "new": "client.completions.create()",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.Edit.create()",
+      "new": "client.edits.create()",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.Embedding.create()",
+      "new": "client.embeddings.create()",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.File.create()",
+      "new": "client.files.create()",
+      "notes": ""
+    },
+    {
+      "method": "list",
+      "old": "openai.File.list()",
+      "new": "client.files.list()",
+      "notes": "All list() methods that support pagination now support automatic iteration; previously you would have to explicitly call a `.auto_paging_iter()` method instead."
+    },
+    {
+      "method": "retrieve",
+      "old": "openai.File.retrieve()",
+      "new": "client.files.retrieve()",
+      "notes": ""
+    },
+    {
+      "method": "download",
+      "old": "openai.File.download()",
+      "new": "client.files.retrieve_content()",
+      "notes": ""
+    },
+    {
+      "method": "cancel",
+      "old": "openai.FineTune.cancel()",
+      "new": "client.fine_tunes.cancel()",
+      "notes": ""
+    },
+    {
+      "method": "list",
+      "old": "openai.FineTune.list()",
+      "new": "client.fine_tunes.list()",
+      "notes": "All list() methods that support pagination now support automatic iteration; previously you would have to explicitly call a `.auto_paging_iter()` method instead."
+    },
+    {
+      "method": "list_events",
+      "old": "openai.FineTune.list_events()",
+      "new": "client.fine_tunes.list_events()",
+      "notes": ""
+    },
+    {
+      "method": "stream_events",
+      "old": "openai.FineTune.stream_events()",
+      "new": "client.fine_tunes.list_events(stream=True)",
+      "notes": "use client.fine_tunes.list_events(stream=True)"
+    },
+    {
+      "method": "retrieve",
+      "old": "openai.FineTune.retrieve()",
+      "new": "client.fine_tunes.retrieve()",
+      "notes": ""
+    },
+    {
+      "method": "delete",
+      "old": "openai.FineTune.delete()",
+      "new": "client.fine_tunes.delete()",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.FineTune.create()",
+      "new": "client.fine_tunes.create()",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.FineTuningJob.create()",
+      "new": "client.fine_tuning.jobs.create()",
+      "notes": ""
+    },
+    {
+      "method": "cancel",
+      "old": "openai.FineTuningJob.cancel()",
+      "new": "client.fine_tuning.jobs.cancel()",
+      "notes": ""
+    },
+    {
+      "method": "delete",
+      "old": "openai.FineTuningJob.delete()",
+      "new": "client.fine_tuning.jobs.create()",
+      "notes": "as stated in changelog: openai.FineTuningJob.delete() -> client.fine_tuning.jobs.create()"
+    },
+    {
+      "method": "retrieve",
+      "old": "openai.FineTuningJob.retrieve()",
+      "new": "client.fine_tuning.jobs.retrieve()",
+      "notes": ""
+    },
+    {
+      "method": "list",
+      "old": "openai.FineTuningJob.list()",
+      "new": "client.fine_tuning.jobs.list()",
+      "notes": "All list() methods that support pagination now support automatic iteration; previously you would have to explicitly call a `.auto_paging_iter()` method instead. e.g. for job in client.fine_tuning.jobs.list(limit=1):"
+    },
+    {
+      "method": "list_events",
+      "old": "openai.FineTuningJob.list_events()",
+      "new": "client.fine_tuning.jobs.list_events()",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.Image.create()",
+      "new": "client.images.generate()",
+      "notes": ""
+    },
+    {
+      "method": "create_variation",
+      "old": "openai.Image.create_variation()",
+      "new": "client.images.create_variation()",
+      "notes": ""
+    },
+    {
+      "method": "create_edit",
+      "old": "openai.Image.create_edit()",
+      "new": "client.images.edit()",
+      "notes": ""
+    },
+    {
+      "method": "list",
+      "old": "openai.Model.list()",
+      "new": "client.models.list()",
+      "notes": "All list() methods that support pagination now support automatic iteration; previously you would have to explicitly call a `.auto_paging_iter()` method instead."
+    },
+    {
+      "method": "delete",
+      "old": "openai.Model.delete()",
+      "new": "client.models.delete()",
+      "notes": ""
+    },
+    {
+      "method": "retrieve",
+      "old": "openai.Model.retrieve()",
+      "new": "client.models.retrieve()",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.Moderation.create()",
+      "new": "client.moderations.create()",
+      "notes": ""
+    }
+  ],
+  "fields_removed": [
+    {
+      "schema_name": "openai",
+      "path": "api_key_path",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "app_info",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "debug",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "log",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "OpenAIError",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "Audio.transcribe_raw",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "Audio.translate_raw",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "ErrorObject",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "Customer",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "api_version",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "verify_ssl_certs",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "api_type",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "enable_telemetry",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "ca_bundle_path",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "requestssession",
+      "old_type": "unknown",
+      "replacement": "httpx",
+      "notes": "we now use httpx (https://github.com/encode/httpx)"
+    },
+    {
+      "schema_name": "openai",
+      "path": "aiosession",
+      "old_type": "unknown",
+      "replacement": "httpx",
+      "notes": "we now use httpx (https://github.com/encode/httpx)"
+    },
+    {
+      "schema_name": "openai",
+      "path": "Deployment",
+      "old_type": "unknown",
+      "replacement": "azure-mgmt-cognitiveservices",
+      "notes": "only used for Azure"
+    },
+    {
+      "schema_name": "openai",
+      "path": "Engine",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "File.find_matching_files",
+      "old_type": "unknown",
+      "replacement": null,
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "path": "embeddings_utils",
+      "old_type": "unknown",
+      "replacement": "cookbook",
+      "notes": "now in the cookbook"
+    },
+    {
+      "schema_name": "openai",
+      "path": "a* methods",
+      "old_type": "unknown",
+      "replacement": "async client",
+      "notes": "all `a*` methods have been removed; the async client must be used instead"
+    },
+    {
+      "schema_name": "openai",
+      "path": "Weights and Biases CLI",
+      "old_type": "unknown",
+      "replacement": "separate package",
+      "notes": "Weights and Biases CLI will now be included in their own package"
+    }
+  ],
+  "fields_added": [],
+  "fields_renamed": [
+    {
+      "schema_name": "openai",
+      "old_path": "api_base",
+      "new_path": "base_url",
+      "notes": "openai.api_base -> openai.base_url; global client option can also be configured as OpenAI(base_url=\"https://...\")"
+    },
+    {
+      "schema_name": "openai",
+      "old_path": "proxy",
+      "new_path": "proxies",
+      "notes": "see https://www.python-httpx.org/compatibility/#proxy-keys"
+    },
+    {
+      "schema_name": "openai",
+      "old_path": "InvalidRequestError",
+      "new_path": "BadRequestError",
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "old_path": "api_resources",
+      "new_path": "resources",
+      "notes": ""
+    }
+  ],
+  "type_changes": [
+    {
+      "schema_name": "Response",
+      "path": "",
+      "old_type": "dict",
+      "new_type": "pydantic BaseModel",
+      "notes": "Response objects are now pydantic models and no longer conform to the dictionary shape. Use attribute access: `completion.choices[0].text`, `completion.choices[0].message.content`, `dict(completion).get('usage')`; convert with `model.model_dump()` and `completion.model_dump_json(indent=2)` instead of `completion['choices'][0]['text']`, `completion.get('usage')`, `json.dumps(completion)`"
+    },
+    {
+      "schema_name": "PaginatedList",
+      "path": "",
+      "old_type": "paginated response requiring `.auto_paging_iter()`",
+      "new_type": "auto-iterable paginated response",
+      "notes": "All `list()` methods that support pagination in the API now support automatic iteration, for example: `for job in client.fine_tuning.jobs.list(limit=1):`. Previously you would have to explicitly call a `.auto_paging_iter()` method instead."
+    },
+    {
+      "schema_name": "OpenAI",
+      "path": "client",
+      "old_type": "global module state",
+      "new_type": "OpenAI client instance",
+      "notes": "Switch to explicit client instantiation: `client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])` instead of `openai.api_key = os.environ['OPENAI_API_KEY']`. Global `openai.api_key`, `openai.base_url`, `openai.default_headers` with `openai.chat.completions.create(...)` remains only for REPLs/notebooks, not application code."
+    }
+  ],
+  "value_changes": [],
+  "target_dependency": {
+    "name": "openai",
+    "constraint": "<2,>=1",
+    "source": "cli"
+  }
+}

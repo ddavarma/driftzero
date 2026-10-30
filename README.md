@@ -165,6 +165,26 @@ hand-written migration against `openai` 1.109.1.
 
 Logs: [`docs/runs/20261030-165401-ebb8d2.*`](docs/runs/).
 
+**Rerun `20261030-171945-fe1c00` after fixing those gaps: verified in 1 iteration,
+[PR #1 on the fork](https://github.com/ddavarma/JobTracker-driftzero-test/pull/1).** Changes since the failed run:
+verify installs the target's declared dependencies plus the target pin and the hold-outs' own requirements (from
+`benchmarks/targets.json`); `DriftSpec.target_dependency` (`--target-dep "openai>=1,<2"`; the guide states no
+constraint) is pinned in the repair prompt and installed by verify, and the hold-outs were re-validated against it;
+Muse runs its tests in a per-run venv with the target's dependencies instead of DriftZero's own; the guard rejects
+library code that stubs the target dependency; collection errors reach the retry prompt with hold-out paths scrubbed;
+blast radius follows `mock.patch` strings and `unittest` `setUp`; and benchmark-specific repair rules (the fleet
+telemetry ones had been sent to JobTracker too) moved into per-target config.
+
+- Differ $0.050 (59 entries, again all from the changelog). Blast radius: 11 symbols in 3 files, 3 tests (was 3
+  symbols, 0 tests). Repair: 23 steps. `requirements.txt` `openai==0.28.1` → `openai<2,>=1`; an explicit
+  `OpenAI(api_key=...)` client, `client.models.list()` with `.id`, `client.chat.completions.create`,
+  `message.function_call.arguments`, `openai.OpenAIError`; no stubs, `tiktoken`/`requests` imports intact.
+- Guard ok: 0 rejections, the 4 restructured mocks reported for review. Modal: install of `requirements.txt` + pin
+  + `respx` all exit 0; agent suite 5/5, hold-outs 7/7.
+- Reviewer: approve, one low-confidence finding (0.35: an unreachable pre-existing `except json.JSONDecodeError`); no
+  fix pass. $0.40 total, 173 s end to end.
+- Logs: [`docs/runs/20261030-171945-fe1c00.*`](docs/runs/).
+
 ## Limitations
 
 - **The open-weights reviewer needed the right inputs to catch the rounding.** Same model (Muse Spark Open on
