@@ -5,3 +5,6 @@ __pycache__/
 .muse/
 *.pyc
 .DS_Store
+.driftzero/
+*.egg-info/
+.pytest_cache/

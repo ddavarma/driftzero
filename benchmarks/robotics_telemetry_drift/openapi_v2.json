@@ -1,0 +1,546 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Fleet Telemetry API",
+    "version": "2.0.0",
+    "description": "Real-time pose and health telemetry for the autonomous mobile robot (AMR) fleet. v2 replaces Euler angles with a unit quaternion, replaces scalar noise with a full 6x6 pose covariance, and adds a health score."
+  },
+  "servers": [
+    {
+      "url": "https://telemetry.fleet.example.com/v2"
+    }
+  ],
+  "paths": {
+    "/robots/{robot_id}/telemetry/latest": {
+      "get": {
+        "operationId": "getLatestTelemetry",
+        "summary": "Most recent telemetry frame for one robot.",
+        "parameters": [
+          {
+            "name": "robot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "amr-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest frame.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryFrame"
+                },
+                "example": {
+                  "robot_id": "amr-01",
+                  "timestamp": 1793318399.2,
+                  "position": {
+                    "x": 12.4,
+                    "y": 3.1,
+                    "z": 0.0
+                  },
+                  "orientation": {
+                    "qx": 0.010373,
+                    "qy": -0.004593,
+                    "qz": 0.688343,
+                    "qw": 0.725296
+                  },
+                  "covariance": [
+                    [
+                      0.0016,
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    [
+                      0.0,
+                      0.0016,
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    [
+                      0.0,
+                      0.0,
+                      0.0016,
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    [
+                      0.0,
+                      0.0,
+                      0.0,
+                      7.615e-05,
+                      0.0,
+                      0.0
+                    ],
+                    [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0,
+                      7.615e-05,
+                      0.0
+                    ],
+                    [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0,
+                      7.615e-05
+                    ]
+                  ],
+                  "health": 0.97,
+                  "battery": 0.82
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown robot_id."
+          }
+        }
+      }
+    },
+    "/fleet/telemetry": {
+      "get": {
+        "operationId": "getFleetTelemetry",
+        "summary": "Latest frame for every robot in the fleet.",
+        "responses": {
+          "200": {
+            "description": "Fleet snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetSnapshot"
+                },
+                "example": {
+                  "api_version": "v2",
+                  "generated_at": 1793318400.0,
+                  "frames": [
+                    {
+                      "robot_id": "amr-01",
+                      "timestamp": 1793318399.2,
+                      "position": {
+                        "x": 12.4,
+                        "y": 3.1,
+                        "z": 0.0
+                      },
+                      "orientation": {
+                        "qx": 0.010373,
+                        "qy": -0.004593,
+                        "qz": 0.688343,
+                        "qw": 0.725296
+                      },
+                      "covariance": [
+                        [
+                          0.0016,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0016,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0016,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05
+                        ]
+                      ],
+                      "health": 0.97,
+                      "battery": 0.82
+                    },
+                    {
+                      "robot_id": "amr-02",
+                      "timestamp": 1793318399.5,
+                      "position": {
+                        "x": 8.0,
+                        "y": -2.5,
+                        "z": 0.0
+                      },
+                      "orientation": {
+                        "qx": -0.160862,
+                        "qy": 0.015822,
+                        "qz": 0.986833,
+                        "qw": -0.005807
+                      },
+                      "covariance": [
+                        [
+                          0.0036,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0036,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0036,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05
+                        ]
+                      ],
+                      "health": 0.58,
+                      "battery": 0.64
+                    },
+                    {
+                      "robot_id": "amr-03",
+                      "timestamp": 1793318399.7,
+                      "position": {
+                        "x": 15.2,
+                        "y": 7.7,
+                        "z": 0.1
+                      },
+                      "orientation": {
+                        "qx": 0.006958,
+                        "qy": -0.002679,
+                        "qz": 0.008708,
+                        "qw": -0.999934
+                      },
+                      "covariance": [
+                        [
+                          0.0961,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0961,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0961,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05
+                        ]
+                      ],
+                      "health": 0.41,
+                      "battery": 0.91
+                    },
+                    {
+                      "robot_id": "amr-04",
+                      "timestamp": 1793318399.9,
+                      "position": {
+                        "x": 3.3,
+                        "y": 1.0,
+                        "z": 0.0
+                      },
+                      "orientation": {
+                        "qx": 0.0,
+                        "qy": 0.0,
+                        "qz": -0.382683,
+                        "qw": 0.92388
+                      },
+                      "covariance": [
+                        [
+                          0.0025,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0025,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0025,
+                          0.0,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05,
+                          0.0,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05,
+                          0.0
+                        ],
+                        [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0,
+                          7.615e-05
+                        ]
+                      ],
+                      "health": 0.72,
+                      "battery": 0.11
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Position": {
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "z"
+        ],
+        "additionalProperties": false,
+        "description": "Position in the fleet map frame, metres.",
+        "properties": {
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          },
+          "z": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "TelemetryFrame": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "robot_id",
+          "timestamp",
+          "position",
+          "orientation",
+          "covariance",
+          "health",
+          "battery"
+        ],
+        "properties": {
+          "robot_id": {
+            "type": "string",
+            "example": "amr-01"
+          },
+          "timestamp": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix seconds."
+          },
+          "position": {
+            "$ref": "#/components/schemas/Position"
+          },
+          "battery": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "State of charge, 0..1."
+          },
+          "orientation": {
+            "$ref": "#/components/schemas/Quaternion"
+          },
+          "covariance": {
+            "type": "array",
+            "minItems": 6,
+            "maxItems": 6,
+            "items": {
+              "type": "array",
+              "minItems": 6,
+              "maxItems": 6,
+              "items": {
+                "type": "number"
+              }
+            },
+            "description": "6x6 symmetric pose covariance, row-major nested arrays. Variable order: x, y, z (m), rotation about X, Y, Z (rad). Position block is [0:3, 0:3] in m^2."
+          },
+          "health": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Composite localisation/drive health score from the on-robot monitor. 1 = nominal. Values below 0.5 indicate the robot should be serviced."
+          }
+        }
+      },
+      "FleetSnapshot": {
+        "type": "object",
+        "required": [
+          "api_version",
+          "frames"
+        ],
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "const": "v2"
+          },
+          "generated_at": {
+            "type": "number",
+            "description": "Unix seconds."
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TelemetryFrame"
+            }
+          }
+        }
+      },
+      "Quaternion": {
+        "type": "object",
+        "required": [
+          "qx",
+          "qy",
+          "qz",
+          "qw"
+        ],
+        "additionalProperties": false,
+        "description": "Unit quaternion (Hamilton convention, scalar-last) giving the body-to-map rotation. Server guarantees |q| = 1 within 1e-6; q and -q are the same rotation.",
+        "properties": {
+          "qx": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          },
+          "qy": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          },
+          "qz": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          },
+          "qw": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          }
+        }
+      }
+    }
+  }
+}

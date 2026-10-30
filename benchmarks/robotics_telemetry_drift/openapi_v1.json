@@ -1,0 +1,264 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Fleet Telemetry API",
+    "version": "1.0.0",
+    "description": "Real-time pose and health telemetry for the autonomous mobile robot (AMR) fleet. v1 reports orientation as Euler angles in degrees and localisation quality as a single scalar noise value."
+  },
+  "servers": [
+    {
+      "url": "https://telemetry.fleet.example.com/v1"
+    }
+  ],
+  "paths": {
+    "/robots/{robot_id}/telemetry/latest": {
+      "get": {
+        "operationId": "getLatestTelemetry",
+        "summary": "Most recent telemetry frame for one robot.",
+        "parameters": [
+          {
+            "name": "robot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "amr-01"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest frame.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelemetryFrame"
+                },
+                "example": {
+                  "robot_id": "amr-01",
+                  "timestamp": 1793318399.2,
+                  "position": {
+                    "x": 12.4,
+                    "y": 3.1,
+                    "z": 0.0
+                  },
+                  "orientation": {
+                    "roll": 0.5,
+                    "pitch": -1.2,
+                    "yaw": 87.0
+                  },
+                  "noise": 0.04,
+                  "battery": 0.82
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown robot_id."
+          }
+        }
+      }
+    },
+    "/fleet/telemetry": {
+      "get": {
+        "operationId": "getFleetTelemetry",
+        "summary": "Latest frame for every robot in the fleet.",
+        "responses": {
+          "200": {
+            "description": "Fleet snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetSnapshot"
+                },
+                "example": {
+                  "api_version": "v1",
+                  "generated_at": 1793318400.0,
+                  "frames": [
+                    {
+                      "robot_id": "amr-01",
+                      "timestamp": 1793318399.2,
+                      "position": {
+                        "x": 12.4,
+                        "y": 3.1,
+                        "z": 0.0
+                      },
+                      "orientation": {
+                        "roll": 0.5,
+                        "pitch": -1.2,
+                        "yaw": 87.0
+                      },
+                      "noise": 0.04,
+                      "battery": 0.82
+                    },
+                    {
+                      "robot_id": "amr-02",
+                      "timestamp": 1793318399.5,
+                      "position": {
+                        "x": 8.0,
+                        "y": -2.5,
+                        "z": 0.0
+                      },
+                      "orientation": {
+                        "roll": 2.0,
+                        "pitch": 18.5,
+                        "yaw": 181.0
+                      },
+                      "noise": 0.06,
+                      "battery": 0.64
+                    },
+                    {
+                      "robot_id": "amr-03",
+                      "timestamp": 1793318399.7,
+                      "position": {
+                        "x": 15.2,
+                        "y": 7.7,
+                        "z": 0.1
+                      },
+                      "orientation": {
+                        "roll": -0.8,
+                        "pitch": 0.3,
+                        "yaw": 359.0
+                      },
+                      "noise": 0.31,
+                      "battery": 0.91
+                    },
+                    {
+                      "robot_id": "amr-04",
+                      "timestamp": 1793318399.9,
+                      "position": {
+                        "x": 3.3,
+                        "y": 1.0,
+                        "z": 0.0
+                      },
+                      "orientation": {
+                        "roll": 0.0,
+                        "pitch": 0.0,
+                        "yaw": -45.0
+                      },
+                      "noise": 0.05,
+                      "battery": 0.11
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Position": {
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "z"
+        ],
+        "additionalProperties": false,
+        "description": "Position in the fleet map frame, metres.",
+        "properties": {
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          },
+          "z": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "TelemetryFrame": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "robot_id",
+          "timestamp",
+          "position",
+          "orientation",
+          "noise",
+          "battery"
+        ],
+        "properties": {
+          "robot_id": {
+            "type": "string",
+            "example": "amr-01"
+          },
+          "timestamp": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix seconds."
+          },
+          "position": {
+            "$ref": "#/components/schemas/Position"
+          },
+          "battery": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "State of charge, 0..1."
+          },
+          "orientation": {
+            "$ref": "#/components/schemas/EulerOrientation"
+          },
+          "noise": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Scalar 1-sigma position uncertainty in metres (isotropic)."
+          }
+        }
+      },
+      "FleetSnapshot": {
+        "type": "object",
+        "required": [
+          "api_version",
+          "frames"
+        ],
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "const": "v1"
+          },
+          "generated_at": {
+            "type": "number",
+            "description": "Unix seconds."
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TelemetryFrame"
+            }
+          }
+        }
+      },
+      "EulerOrientation": {
+        "type": "object",
+        "required": [
+          "roll",
+          "pitch",
+          "yaw"
+        ],
+        "additionalProperties": false,
+        "description": "Euler angles in DEGREES, intrinsic Z-Y-X (yaw, then pitch, then roll). Body-to-map rotation R = Rz(yaw)·Ry(pitch)·Rx(roll).",
+        "properties": {
+          "roll": {
+            "type": "number"
+          },
+          "pitch": {
+            "type": "number"
+          },
+          "yaw": {
+            "type": "number",
+            "description": "Unnormalised; may be negative or >= 360."
+          }
+        }
+      }
+    }
+  }
+}
