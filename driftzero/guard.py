@@ -341,7 +341,8 @@ def _diff_function(path: str, qual: str, fn_old, fn_new, res: GuardResult) -> No
                                                     test=qual, old=o, new=n))
         else:
             other += [f"removed `{o}`" for o in olds] + [f"added `{n}`" for n in news]
-            if sum(_approx_and_tolerances(ast.parse(n)) for n in news) > \
+            # pure insertions add new checks; only replacing existing lines can loosen one
+            if olds and sum(_approx_and_tolerances(ast.parse(n)) for n in news) > \
                     sum(_approx_and_tolerances(ast.parse(o)) for o in olds):
                 res.review_items.append(Finding("loosened", path, "comparison loosened (approx/tolerance added)",
                                                 test=qual, old="\n".join(olds), new="\n".join(news)))

@@ -158,6 +158,12 @@ def test_review_comparison_loosening():
     assert res.ok and "loosened" in rules(res.review_items)
 
 
+def test_added_assert_using_approx_is_not_loosening():
+    old = "def test_p():\n    assert f() == 1\n"
+    res = run(old + "    assert g() == pytest.approx(2.0)\n", old=old)
+    assert res.ok and "loosened" not in rules(res.review_items) and rules(res.review_items) == ["modified_test"]
+
+
 def test_review_added_test_and_structural_edit():
     new = BASE.replace("    assert f(2) == 3\n", "    assert f(2) == 3\n    assert f(3) == 4\n") + \
         "\n\ndef test_new():\n    assert f(5) == 6\n"
