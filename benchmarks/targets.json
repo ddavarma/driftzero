@@ -1,0 +1,7 @@
+{
+  "_comment": "Remote target repo (owner/name) -> the DriftZero benchmark that holds its hold-out tests. Hold-outs never live in the target.",
+  "ddavarma/fleet-telemetry-v1": {
+    "benchmark": "benchmarks/robotics_telemetry_drift",
+    "holdout": "benchmarks/robotics_telemetry_drift/holdout_v2"
+  }
+}

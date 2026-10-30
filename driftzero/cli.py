@@ -23,26 +23,60 @@ def main() -> None:
 
 @app.command()
 def migrate(
-    repo: Path = typer.Option(..., exists=True, file_okay=False, help="Repo (or project subdirectory of a repo) to migrate."),
-    spec: Path = typer.Option(..., exists=True, dir_okay=False, help="DriftSpec JSON."),
+    repo: str = typer.Option(..., help="Local repo / project directory, or a git URL (https://github.com/owner/name)."),
+    spec: Path = typer.Option(None, exists=True, dir_okay=False, help="DriftSpec JSON (or give the inputs below)."),
+    changelog: Path = typer.Option(None, exists=True, dir_okay=False, help="Changelog; runs `driftzero diff` first."),
+    openapi_v1: Path = typer.Option(None, "--openapi-v1", exists=True, dir_okay=False, help="Old OpenAPI document."),
+    openapi_v2: Path = typer.Option(None, "--openapi-v2", exists=True, dir_okay=False, help="New OpenAPI document."),
     no_pr: bool = typer.Option(False, "--no-pr", help="Push the verified branch but don't open a PR."),
     max_iterations: int = typer.Option(3, help="Repair/verify attempts before giving up."),
     contributor: bool = typer.Option(False, "--contributor", help="Contributor mode (cheaper; Meta trains on it). Dev only."),
     local: bool = typer.Option(False, "--local", help="Verify locally instead of in a Modal sandbox."),
 ) -> None:
-    """Blast radius -> Muse repair -> guard -> sandbox verify (retrying) -> push + pull request."""
+    """(diff ->) blast radius -> Muse repair -> guard -> sandbox verify (retrying) -> push + pull request."""
+    import shlex
+    import sys
+    import time
+
+    from driftzero import differ
     from driftzero import loop as loop_mod
     from driftzero import pr as pr_mod
+    from driftzero import target as target_mod
 
-    res = loop_mod.repair_until_verified(repo, spec, max_iterations, local=local, contributor=contributor)
+    if not spec and not (changelog or (openapi_v1 and openapi_v2)):
+        raise typer.BadParameter("give --spec, or --changelog and/or --openapi-v1 + --openapi-v2")
+    if not target_mod.is_url(repo) and not Path(repo).is_dir():
+        raise typer.BadParameter(f"--repo {repo!r} is neither a directory nor a git URL")
+    command = "driftzero " + " ".join(shlex.quote(a) for a in sys.argv[1:])
+    diff_info = None
+    if not spec:
+        typer.echo("=== diff: changelog / OpenAPI -> DriftSpec")
+        res_d = differ.diff(changelog, openapi_v1, openapi_v2)
+        runs = target_mod.home_dir() / ".driftzero" / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        spec = runs / f"diff-{time.strftime('%Y%m%d-%H%M%S')}.driftspec.json"
+        res_d.spec.dump(spec)
+        n = sum(len(getattr(res_d.spec, c)) for c in differ.CATEGORIES)
+        typer.echo(f"DriftSpec: {n} changes from {len(res_d.candidates)} OpenAPI candidates "
+                   f"(+{len(res_d.model_added)} from the changelog, {len(res_d.restored)} restored) -> {spec}")
+        typer.echo(f"differ: ${res_d.cost.usd or 0:.4f}, {res_d.cost.input_tokens} in / {res_d.cost.output_tokens} out, "
+                   f"{res_d.latency_s:.1f}s")
+        diff_info = {"cost": res_d.cost, "spec_path": str(spec), "candidates": len(res_d.candidates),
+                     "model_added": res_d.model_added, "restored": res_d.restored, "latency_s": res_d.latency_s,
+                     "inputs": {"changelog": str(changelog) if changelog else None,
+                                "openapi_v1": str(openapi_v1) if openapi_v1 else None,
+                                "openapi_v2": str(openapi_v2) if openapi_v2 else None}}
+
+    res = loop_mod.repair_until_verified(repo, spec, max_iterations, local=local, contributor=contributor,
+                                         diff_info=diff_info, command=command)
     if not res.passed:
         typer.echo(f"not verified after {len(res.iterations)} iteration(s); worktree kept at {res.worktree.path}")
         raise typer.Exit(1)
-    pr = pr_mod.open_pr(res, create=not no_pr)
-    typer.echo(f"pushed {pr.branch} @ {pr.commit[:10]}")
+    pr = pr_mod.open_pr(res, create=not no_pr, spec_path=str(spec))
+    typer.echo(f"pushed {pr.branch} @ {pr.commit[:10]} to {res.target_url or 'origin'}")
     typer.echo(f"PR: {pr.url}" if pr.url else "PR: not created (--no-pr)")
     usd = "n/a" if res.cost.usd is None else f"${res.cost.usd:.4f}"
-    typer.echo(f"{len(res.iterations)} iteration(s), {usd}, {res.wall_time_s:.0f}s end to end")
+    typer.echo(f"{len(res.iterations)} iteration(s), {usd} total, {res.wall_time_s:.0f}s loop + {pr.pr_s:.0f}s PR")
 
 
 @app.command("diff")
@@ -118,7 +152,7 @@ def repair(
     br = analyze(repo, spec_obj)
     task_id = repair_mod.new_task_id()
     wt = repair_mod.create_worktree(repo, task_id)
-    runs = wt.root / ".driftzero" / "runs"
+    runs = wt.runs_dir
     typer.echo(f"task {task_id}: {len(br.symbols)} impacted symbols in {len(br.files)} files, {len(br.tests)} tests")
     typer.echo(f"worktree {wt.path} (branch {wt.branch}, base {wt.base[:10]})")
     try:

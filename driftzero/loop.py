@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Callable
 
 from driftzero import repair as repair_mod
+from driftzero import target as target_mod
 from driftzero import verify as verify_mod
 from driftzero.blast_radius import BlastRadius, analyze
 from driftzero.guard import GuardResult, guard_check
@@ -50,6 +51,10 @@ class LoopResult:
     verify: verify_mod.VerifyResult | None = None
     hidden_holdout_files: list[str] = field(default_factory=list)
     ended_at: float | None = None  # unix time the loop finished (the PR step's clock starts here)
+    target_url: str | None = None   # set when --repo was a URL
+    target_slug: str | None = None  # owner/name, for gh pr create -R
+    diff_cost: Cost | None = None   # the differ's model call, when the spec was generated
+    command: str | None = None      # the CLI command that started the run (for "Reproduce")
 
 
 def _head(text: str, n: int = FAILURE_HEAD_LINES) -> str:
@@ -75,11 +80,6 @@ def build_prior_failure(result: verify_mod.VerifyResult) -> str:
     return "\n".join(parts)
 
 
-def find_holdout(repo: Path) -> Path | None:
-    found = sorted(p for p in repo.glob("holdout_*") if p.is_dir())
-    return found[0] if found else None
-
-
 def repair_until_verified(
     repo: str | Path,
     spec: DriftSpec | str | Path,
@@ -93,26 +93,49 @@ def repair_until_verified(
     max_steps: int = repair_mod.DEFAULT_MAX_STEPS,
     effort: str = repair_mod.DEFAULT_EFFORT,
     on_line: Callable[[str], None] = lambda s: print(s, flush=True),
+    home: Path | None = None,
+    targets_file: Path | None = None,
+    diff_info: dict | None = None,
+    command: str | None = None,
 ) -> LoopResult:
+    """`repo` is a local path or a git URL (cloned under <home>/.driftzero/clones/<id>).
+
+    `home` is where .driftzero/ state lives: DriftZero's checkout for URL targets, the repo's own
+    root for local ones. `diff_info` ({"cost": Cost, ...}) records a differ run that produced `spec`.
+    """
     t0 = time.monotonic()
     spec_path = None if isinstance(spec, DriftSpec) else str(Path(spec).resolve())
     spec = spec if isinstance(spec, DriftSpec) else DriftSpec.load(spec)
-    repo = Path(repo).resolve()
-    br = analyze(repo, spec)
     task_id = repair_mod.new_task_id()
-    wt = repair_mod.create_worktree(repo, task_id)
-    runs = wt.root / ".driftzero" / "runs"
+    remote = target_mod.is_url(repo)
+    home = Path(home).resolve() if home else (target_mod.home_dir() if remote else None)
+    target = target_mod.prepare(repo, home or Path.cwd(), task_id)
+    br = analyze(target.path, spec)
+    wt = repair_mod.create_worktree(target.path, task_id, home=home)
+    runs = wt.runs_dir
     runs.mkdir(parents=True, exist_ok=True)
     log_path = runs / f"{task_id}.jsonl"
 
-    holdout = Path(holdout_dir).resolve() if holdout_dir else find_holdout(repo)
-    hidden = repair_mod.hide_in_worktree(wt, [os.path.relpath(holdout, wt.root)]) if holdout else []
+    if holdout_dir:
+        holdout = Path(holdout_dir).resolve()
+    else:
+        holdout = target_mod.holdout_for(target, home or target_mod.home_dir(),
+                                         **({"targets_file": targets_file} if targets_file else {}))
+    inside = holdout is not None and holdout.is_relative_to(wt.root)
+    hidden = repair_mod.hide_in_worktree(wt, [os.path.relpath(holdout, wt.root)]) if inside else []
 
     def log(event: str, **data) -> None:
         with log_path.open("a") as fh:
             fh.write(json.dumps({"ts": time.time(), "event": event, "task_id": task_id, **data}, default=str) + "\n")
 
-    log("start", repo=str(repo), spec_path=spec_path, branch=wt.branch, base=wt.base, worktree=str(wt.path), dry_run=dry_run,
+    diff_cost = (diff_info or {}).get("cost")
+    if diff_info:
+        with log_path.open("a") as fh:
+            fh.write(json.dumps({"ts": time.time(), "event": "diff", "task_id": task_id,
+                                 **{k: v for k, v in diff_info.items() if k != "cost"},
+                                 "cost": diff_cost.as_dict() if diff_cost else None}, default=str) + "\n")
+    log("start", repo=str(repo), target_url=target.url, target_slug=target.slug, source_root=str(wt.root),
+        home=str(wt.state_dir.parent), command=command, spec_path=spec_path, branch=wt.branch, base=wt.base, worktree=str(wt.path), dry_run=dry_run,
         local=local, model=model, contributor=contributor, max_iterations=max_iterations,
         holdout=str(holdout) if holdout else None, hidden_from_agent=len(hidden),
         impacted_symbols=len(br.symbols), impacted_tests=len(br.tests))
@@ -149,7 +172,7 @@ def repair_until_verified(
         vres = None
         if guard.ok and holdout is not None:
             on_line(f"=== iteration {n}/{max_iterations}: verify ({'local' if local else 'modal'})")
-            vres = verify_mod.verify(wt.path, holdout, local=local, on_line=on_line)
+            vres = verify_mod.verify(wt.path, holdout, local=local, project_rel=wt.project_rel, on_line=on_line)
             verify_mod.save_result(vres, runs, f"{task_id}.i{n}")
             on_line(vres.summary())
         passed = bool(guard.ok and vres and vres.passed)
@@ -185,12 +208,16 @@ def repair_until_verified(
             prior_failure = build_prior_failure(vres)
 
     wall = round(time.monotonic() - t0, 1)
-    log("end", passed=passed, iterations=len(iterations), cost=total.as_dict(), wall_time_s=wall)
+    if diff_cost:
+        total = total + diff_cost
+    log("end", passed=passed, iterations=len(iterations), cost=total.as_dict(), wall_time_s=wall,
+        diff_cost=diff_cost.as_dict() if diff_cost else None)
     on_line(f"{'VERIFIED' if passed else 'NOT VERIFIED'} after {len(iterations)} iteration(s), "
             f"${total.usd or 0:.4f}, {wall:.0f}s; log {log_path}")
     return LoopResult(task_id=task_id, worktree=wt, spec=spec, blast_radius=br, passed=passed, iterations=iterations,
                       log_path=log_path, cost=total, wall_time_s=wall, model=model, steps=steps, answer=answer,
-                      guard=guard, verify=vres, hidden_holdout_files=hidden, ended_at=time.time())
+                      guard=guard, verify=vres, hidden_holdout_files=hidden, ended_at=time.time(),
+                      target_url=target.url, target_slug=target.slug, diff_cost=diff_cost, command=command)
 
 
 if __name__ == "__main__":

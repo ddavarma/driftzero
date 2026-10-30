@@ -174,12 +174,14 @@ def _tail(text: str, n: int = 40) -> str:
     return "\n".join(text.splitlines()[-n:])
 
 
-def verify_in_modal(worktree: str | Path, holdout_dir: str | Path | None = None,
-                    *, on_line=lambda s: print(s, flush=True)) -> VerifyResult:
+def verify_in_modal(worktree: str | Path, holdout_dir: str | Path | None = None, *, project_rel: str | None = None,
+                    on_line=lambda s: print(s, flush=True)) -> VerifyResult:
+    """`project_rel`: the project inside the worktree; by default inferred from where the hold-outs live."""
     import modal
 
     worktree = Path(worktree).resolve()
-    holdout_dir, project_rel = resolve_holdout(worktree, holdout_dir)
+    holdout_dir, inferred = resolve_holdout(worktree, holdout_dir)
+    project_rel = project_rel or inferred
     payload = _tar_bytes(worktree, holdout_dir, project_rel)
     project = f"{REMOTE_ROOT}/wt/{project_rel}"
     agent_cmd, holdout_cmd = pytest_commands("/tmp")
@@ -223,11 +225,12 @@ def verify_in_modal(worktree: str | Path, holdout_dir: str | Path | None = None,
                         wall_time_s=round(wall, 1), sandbox_id=sb.object_id)
 
 
-def verify_local(worktree: str | Path, holdout_dir: str | Path | None = None,
-                 *, python: str = sys.executable, on_line=lambda s: print(s, flush=True)) -> VerifyResult:
+def verify_local(worktree: str | Path, holdout_dir: str | Path | None = None, *, project_rel: str | None = None,
+                 python: str = sys.executable, on_line=lambda s: print(s, flush=True)) -> VerifyResult:
     """Same two commands in a throwaway copy, with the current interpreter (needs pytest + numpy)."""
     worktree = Path(worktree).resolve()
-    holdout_dir, project_rel = resolve_holdout(worktree, holdout_dir)
+    holdout_dir, inferred = resolve_holdout(worktree, holdout_dir)
+    project_rel = project_rel or inferred
     start = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="driftzero-verify-") as tmp:
         with tarfile.open(fileobj=io.BytesIO(_tar_bytes(worktree, holdout_dir, project_rel))) as tar:

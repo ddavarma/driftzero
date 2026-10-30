@@ -23,6 +23,7 @@ from pathlib import Path
 from driftzero import repair as repair_mod
 from driftzero import verify as verify_mod
 from driftzero.blast_radius import PROPAGATING, BlastRadius, analyze
+from driftzero.differ import DIFF_MODEL
 from driftzero.guard import _is_test_path, guard_check
 from driftzero.loop import LoopResult
 from driftzero.spec import DriftSpec
@@ -60,7 +61,7 @@ def _s(seconds: float | None) -> str:
 
 def title(res: LoopResult) -> str:
     s = res.spec
-    return f"DriftZero: migrate {res.worktree.project_rel} to {s.api} {s.to_version}"
+    return f"DriftZero: migrate {res.target_slug or res.worktree.project_rel} to {s.api} {s.to_version}"
 
 
 # --------------------------------------------------------------------------- derived facts
@@ -128,7 +129,8 @@ def _lead(res: LoopResult, diff: repair_mod.RepairDiff, t: dict) -> list[str]:
     usd = "n/a" if c.usd is None else f"${c.usd:.4f}"
     pr_part = f" + {_s(t['pr_s'])} PR" if t["pr_s"] is not None else ""
     return [
-        f"> **Changed** {len(diff.files)} files (+{diff.added} / −{diff.deleted}) in `{res.worktree.project_rel}`: "
+        f"> **Changed** {len(diff.files)} files (+{diff.added} / −{diff.deleted}) in "
+        f"`{res.target_slug or res.worktree.project_rel}`: "
         f"{lib} library, {tests} test / fixture<br>",
         f"> **Verified** {verified}<br>",
         f"> **Cost** {usd} · {_s(res.wall_time_s)} repair loop{pr_part} · `{res.model}`, {res.steps} model steps",
@@ -255,7 +257,8 @@ def _cost_section(res: LoopResult) -> list[str]:
         f"| tokens | {c.input_tokens:,} input ({c.cached_pct:.1f}% cached), {c.output_tokens:,} output "
         f"({c.reasoning_tokens:,} reasoning) |",
         f"| cost | **{usd}** (Meta rates as of 2026-09) |",
-    ]
+    ] + ([f"| of which DriftSpec generation | ${res.diff_cost.usd or 0:.4f}: one `{DIFF_MODEL}` call, "
+          f"{res.diff_cost.input_tokens:,} in / {res.diff_cost.output_tokens:,} out |"] if res.diff_cost else [])
 
 
 def _log_block(label: str, suite) -> list[str]:
@@ -303,6 +306,9 @@ def _logs_section(res: LoopResult, t: dict, logs: tuple[str, str, list[str]] | N
 
 
 def reproduce_command(res: LoopResult, spec_path: str | None) -> str:
+    if res.command:
+        prefix = "" if res.target_url else f"git checkout {res.worktree.base[:7]} && "
+        return prefix + res.command
     repo_rel = res.worktree.project_rel
     spec_rel = os.path.relpath(spec_path, res.worktree.root) if spec_path else f"{repo_rel}/driftspec.json"
     return f"git checkout {res.worktree.base[:7]} && driftzero migrate --repo {repo_rel} --spec {spec_rel}"
@@ -316,7 +322,8 @@ def render_body(res: LoopResult, *, pr_s: float | None = None, spec_path: str | 
     summary = res.answer.summary if res.answer else "_Muse did not return a structured summary._"
     lines = [
         *_lead(res, diff, t), "",
-        f"Automated migration of `{res.worktree.project_rel}` from **{s.api} {s.from_version} → {s.to_version}**, "
+        f"Automated migration of `{res.target_slug or res.worktree.project_rel}` from "
+        f"**{s.api} {s.from_version} → {s.to_version}**, "
         f"repaired by Muse Code (`{res.model}`) in an isolated git worktree and verified in a sandbox.",
         "",
         "## Agent's own summary", "", summary, "",
@@ -346,14 +353,16 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
     start = next(e for e in events if e["event"] == "start")
     end = next(e for e in events if e["event"] == "end")
     its = [e for e in events if e["event"] == "iteration"]
-    repo = Path(start["repo"])
+    repo = Path(start["source_root"]) if start.get("target_url") else Path(start["repo"])
     spec_path = start.get("spec_path")
     if not spec_path:
         found = sorted(repo.glob("driftspec*.json"))
         spec_path = str(found[0]) if len(found) == 1 else None
     spec = DriftSpec.load(spec_path)
-    wt = repair_mod.Worktree(root=root, path=Path(start["worktree"]), branch=start["branch"], base=start["base"],
-                             project_rel=os.path.relpath(repo, root))
+    source_root = Path(start.get("source_root") or root)
+    wt = repair_mod.Worktree(root=source_root, path=Path(start["worktree"]), branch=start["branch"], base=start["base"],
+                             project_rel=os.path.relpath(repo if not start.get("target_url") else source_root,
+                                                         source_root), home=root)
     last = its[-1]["iteration"]
     vpath = runs / f"{task_id}.i{last}.verify.json"
     vres = verify_mod.VerifyResult.model_validate_json(vpath.read_text()) if vpath.exists() else None
@@ -367,11 +376,18 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
         cost = cost + Cost(c["input_tokens"], c["cached_tokens"], c["output_tokens"], c.get("reasoning_tokens", 0),
                            c.get("usd"))
     guard = guard_check(wt, repair_mod.collect_diff(wt))
+    diff_ev = next((e for e in events if e["event"] == "diff"), None)
+    diff_cost = None
+    if diff_ev and diff_ev.get("cost"):
+        d = diff_ev["cost"]
+        diff_cost = Cost(d["input_tokens"], d["cached_tokens"], d["output_tokens"], d.get("reasoning_tokens", 0), d.get("usd"))
+        cost = cost + diff_cost
     res = LoopResult(task_id=task_id, worktree=wt, spec=spec, blast_radius=analyze(repo, spec),
                      passed=end["passed"], iterations=its, log_path=runs / f"{task_id}.jsonl", cost=cost,
                      wall_time_s=end["wall_time_s"], model=start.get("model") or repair_mod.DEFAULT_MODEL,
                      steps=sum(it["repair"]["steps"] for it in its), answer=answer, guard=guard, verify=vres,
-                     ended_at=end["ts"])
+                     ended_at=end["ts"], target_url=start.get("target_url"), target_slug=start.get("target_slug"),
+                     diff_cost=diff_cost, command=start.get("command"))
     return res, spec_path
 
 
@@ -403,7 +419,8 @@ def open_pr(res: LoopResult, *, create: bool = True, base: str = "main", spec_pa
     body_path.write_text(render_body(res, spec_path=spec_path, diff=diff))
     url = None
     if create:
-        url = subprocess.run(["gh", "pr", "create", "--base", base, "--head", res.worktree.branch,
+        repo_flag = ["-R", res.target_slug] if res.target_slug else []
+        url = subprocess.run(["gh", "pr", "create", *repo_flag, "--base", base, "--head", res.worktree.branch,
                               "--title", title(res), "--body-file", str(body_path)],
                              cwd=res.worktree.path, check=True, capture_output=True, text=True).stdout.strip()
     pr_s = round(time.monotonic() - t0, 1)
@@ -424,14 +441,16 @@ def regenerate(root: Path, task_id: str, update: str | None = None) -> tuple[str
     pr_s = next((e["pr_s"] for e in events if e["event"] == "pr"), None)
     if pr_s is None and update and res.ended_at:
         # runs from before the `pr` event existed: PR creation time on GitHub minus loop end
-        created = subprocess.run(["gh", "pr", "view", update, "--json", "createdAt", "-q", ".createdAt"], cwd=root,
+        repo_flag = ["-R", res.target_slug] if res.target_slug else []
+        created = subprocess.run(["gh", "pr", "view", update, *repo_flag, "--json", "createdAt", "-q", ".createdAt"], cwd=root,
                                  check=True, capture_output=True, text=True).stdout.strip()
         pr_s = round(datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp() - res.ended_at, 1)
     body = render_body(res, pr_s=pr_s, spec_path=spec_path, logs=logs_location(root, task_id))
     out = res.log_path.with_suffix(".pr-v2.md")
     out.write_text(body)
     if update:
-        subprocess.run(["gh", "pr", "edit", update, "--body-file", str(out)], cwd=root, check=True,
+        subprocess.run(["gh", "pr", "edit", update, *(["-R", res.target_slug] if res.target_slug else []),
+                        "--body-file", str(out)], cwd=root, check=True,
                        capture_output=True, text=True)
     return body, out
 

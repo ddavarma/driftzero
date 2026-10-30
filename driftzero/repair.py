@@ -57,10 +57,19 @@ class Worktree:
     branch: str
     base: str           # commit the worktree was cut from
     project_rel: str    # target project, relative to the repo root ("." if it is the root)
+    home: Path | None = None  # where DriftZero keeps .driftzero/ (runs, worktrees); defaults to `root`
 
     @property
     def project(self) -> Path:
         return self.path / self.project_rel
+
+    @property
+    def state_dir(self) -> Path:
+        return (self.home or self.root) / ".driftzero"
+
+    @property
+    def runs_dir(self) -> Path:
+        return self.state_dir / "runs"
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -71,7 +80,7 @@ def new_task_id() -> str:
     return time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
 
 
-def create_worktree(repo: str | Path, task_id: str) -> Worktree:
+def create_worktree(repo: str | Path, task_id: str, home: Path | None = None) -> Worktree:
     """`git worktree add .driftzero/wt-<id> -b driftzero/<id>` at the source repo's HEAD.
 
     `repo` may be a subdirectory of a git repo (the benchmark lives inside the
@@ -81,12 +90,14 @@ def create_worktree(repo: str | Path, task_id: str) -> Worktree:
     repo = Path(repo).resolve()
     root = Path(_git(repo, "rev-parse", "--show-toplevel").strip())
     base = _git(root, "rev-parse", "HEAD").strip()
-    path = root / ".driftzero" / f"wt-{task_id}"
+    state = (Path(home).resolve() if home else root) / ".driftzero"
+    path = state / f"wt-{task_id}"
     branch = f"driftzero/{task_id}"
     path.parent.mkdir(parents=True, exist_ok=True)
     _git(root, "worktree", "add", "-q", str(path), "-b", branch, base)
     rel = os.path.relpath(repo, root)
-    return Worktree(root=root, path=path, branch=branch, base=base, project_rel=rel)
+    return Worktree(root=root, path=path, branch=branch, base=base, project_rel=rel,
+                    home=Path(home).resolve() if home else None)
 
 
 def hide_in_worktree(wt: Worktree, rel_dirs: list[str]) -> list[str]:
@@ -411,7 +422,7 @@ def run_muse(
 ) -> MuseRun:
     """Run Muse Code headless in the worktree, streaming and logging its JSONL events."""
     run_id = run_id or worktree.branch.rsplit("/", 1)[-1]
-    runs_dir = worktree.root / ".driftzero" / "runs"
+    runs_dir = worktree.runs_dir
     runs_dir.mkdir(parents=True, exist_ok=True)
     events_path = runs_dir / f"{run_id}.jsonl"
     stderr_path = runs_dir / f"{run_id}.stderr.log"
@@ -493,7 +504,7 @@ if __name__ == "__main__":
     wt = create_worktree(repo_arg, tid)
     try:
         prompt = write_repair_prompt(spec_obj, analyze(repo_arg, spec_obj), project_rel=wt.project_rel,
-                                     out_path=wt.root / ".driftzero" / "runs" / f"{tid}.prompt.md")
+                                     out_path=wt.runs_dir / f"{tid}.prompt.md")
         run = run_muse(wt, prompt, dry_run=True, run_id=tid)
         print(collect_diff(wt).stat or "(no changes)")
     finally:
