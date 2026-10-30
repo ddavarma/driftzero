@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "driftzero"
+version = "0.0.1"
+description = "Autonomous API-drift repair agent built on Meta's models."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.60",
+    "python-dotenv>=1.0",
+    "pydantic>=2.6",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+driftzero = "driftzero.cli:app"
+
+[tool.setuptools]
+packages = ["driftzero"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: makes a real, billed call to a model provider (needs keys in .env)"]
