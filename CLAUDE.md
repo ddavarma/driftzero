@@ -77,3 +77,4 @@ pyproject.toml          # `driftzero` console entry point
 - All LLM calls go through `driftzero/providers.py` (one OpenAI-compatible client per provider, retries, timeouts).
 - Never let the repair step modify files under `tests/` except fixture data; the guard enforces it.
 - Keep every commit small and pushed; the commit log is evidence for the "new work only" rule.
+- Never state unverified specifics as fact, in code comments, docs, PR bodies or reports. If something is unconfirmed, say so or verify it first.
