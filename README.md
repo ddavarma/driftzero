@@ -126,7 +126,8 @@ The differ's output on the benchmark matches the hand-written `driftspec_v2.json
 removed/added fields with their replacements, type and value changes), with the changelog's formulas attached to
 the right entries ([`docs/diff/driftspec_v2.generated.json`](docs/diff/driftspec_v2.generated.json)).
 
-Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md`](docs/muse_events.md).
+Logs: [`docs/runs/`](docs/runs/). The end-to-end explanation, with every number checked against these logs, is in
+[`docs/PRODUCT.md`](docs/PRODUCT.md). Muse's event vocabulary: [`docs/muse_events.md`](docs/muse_events.md).
 
 ## Limitations
 
@@ -164,7 +165,14 @@ Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md
     requested compatibility layer. **But the catch rate went down**: the PR #2 rounding was mentioned in 2/3 runs and
     never reached 0.5 (v2.1: 2/3 at ≥ 0.6), with the reviewer reasoning that the policy's permission to keep derived
     Euler values covers rounding them; the defaults finding fell to 1/3 (DriftZero PR #1) and 2/3 (fleet-telemetry-v1
-    PR #1) at ≥ 0.5. DriftZero ships v2.2. Neither version is strictly better; the numbers for all three are in
+    PR #1) at ≥ 0.5.
+  - *v2.3* (frozen) adds one sentence to the policy: it governs which interfaces exist, not how values are computed;
+    numeric fidelity to the DriftSpec and changelog formulas is always in scope. **The catch rate went down again**:
+    over 9 runs no finding reached 0.5 confidence (highest 0.45), so every run approved and `--review-fix` would never
+    trigger. The known issues are still mentioned at low confidence (rounding 3/3 and 2/3, defaults 3/3 and 2/3), and
+    on fleet-telemetry-v1 PR #1 7 of 9 non-defaults findings were real defects, 1 spurious. At ≥ 0.6 the rounding was
+    caught in 5/6 runs by v2.1, 2/6 by v2.2 and 0/6 by v2.3. The shipped prompt is v2.3; its verdict carries no signal
+    on these diffs, and its value is the "Possible issues (low confidence)" table a human reads. All numbers:
     [`docs/reviewer_eval.md`](docs/reviewer_eval.md).
   - Caveats: 3 runs per cell, one model, one effort level, two diffs; no false-positive measurement. The v2 design
     (test context, claims rule) was chosen after seeing v1 miss this case. The reviewer's own `line_hint`s are

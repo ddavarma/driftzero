@@ -1,4 +1,4 @@
-# Reviewer consistency eval (v2, v2.1, v2.2)
+# Reviewer consistency eval (v2, v2.1, v2.2, v2.3)
 
 **Question:** how reliably does reviewer v2 (Muse Spark Open, `meta-models/muse-spark-open-1026` on Baseten,
 `reasoning_effort=high`, `max_tokens=24000`) report the two known issues in the two existing migration PRs?
@@ -229,3 +229,64 @@ derived Euler values as covering rounding them to satisfy a test. v2.1 caught th
 runs; v2.2 in 0/3. Neither version is strictly better: v2.1 over-reports, v2.2 under-reports the policy-adjacent
 smell. A policy that said explicitly what it does not permit (e.g. transformations of derived values that exist only
 to meet a test) might restore it, but that would be tuning toward this finding, so it is not done here.
+
+## v2.3: policy scope sentence (9 runs). The reviewer prompt is frozen here.
+
+Change from v2.2, nothing else: the policy preamble adds "This policy governs which interfaces exist, not how values
+are computed; numeric fidelity to the DriftSpec and changelog formulas is always in scope." Same inputs, 3 runs per PR
+at `high`, nothing posted, $0.44. Records: [`reviewer_eval/v2.3/`](reviewer_eval/v2.3/).
+
+| PR | run | verdict | findings | rounding (best confidence) | defaults (best confidence) | cost |
+|---|---|---|---|---|---|---|
+| DriftZero PR #1 | 1 | approve | 2 (0 ≥0.5) | yes, 0.40 | yes, 0.25 | $0.0424 |
+| DriftZero PR #1 | 2 | approve | 2 (0 ≥0.5) | yes, 0.38 | yes, 0.22 | $0.0452 |
+| DriftZero PR #1 | 3 | approve | 5 (0 ≥0.5) | yes, 0.35 | yes, 0.25 | $0.0502 |
+| fleet-telemetry-v1 PR #1 | 1 | approve | 5 (0 ≥0.5) | n/a | yes, 0.30 | $0.0581 |
+| fleet-telemetry-v1 PR #1 | 2 | approve | 3 (0 ≥0.5) | n/a | yes, 0.30 | $0.0564 |
+| fleet-telemetry-v1 PR #1 | 3 | approve | 3 (0 ≥0.5) | n/a | no | $0.0443 |
+| fleet-telemetry-v1 PR #2 | 1 | approve | 0 (0 ≥0.5) | no | n/a | $0.0450 |
+| fleet-telemetry-v1 PR #2 | 2 | approve | 5 (0 ≥0.5) | yes, 0.35 | n/a | $0.0598 |
+| fleet-telemetry-v1 PR #2 | 3 | approve | 4 (0 ≥0.5) | yes, 0.35 | n/a | $0.0378 |
+
+### Catch rates, v2.1 → v2.2 → v2.3 (same mechanical criteria)
+
+| known issue | DriftZero PR #1 | fleet-telemetry-v1 PR #1 | fleet-telemetry-v1 PR #2 |
+|---|---|---|---|
+| rounding, any confidence | 3/3 → 3/3 → 3/3 | n/a | 3/3 → 2/3 → 2/3 |
+| rounding, confidence ≥ 0.5 | 3/3 → 2/3 → 0/3 | n/a | 2/3 → 0/3 → 0/3 |
+| rounding, confidence ≥ 0.6 (`--review-fix` trigger) | 3/3 → 2/3 → 0/3 | n/a | 2/3 → 0/3 → 0/3 |
+| defaults, any confidence | 2/3 → 2/3 → 3/3 | 3/3 → 3/3 → 2/3 | n/a |
+| defaults, confidence ≥ 0.5 | 2/3 → 1/3 → 0/3 | 3/3 → 2/3 → 0/3 | n/a |
+
+**The catch rate went down again, to zero at any actionable threshold.** The sentence did not restore the PR #2
+rounding at ≥ 0.5 (0/3, as in v2.2), and it took DriftZero PR #1's rounding from 2/3 at ≥ 0.6 to 0/3. Across all 9
+runs, **0 findings reached 0.5** (highest confidence anywhere: 0.45), so every run's verdict is
+`approve` and `--review-fix` would never trigger. The known issues are still *mentioned* at low confidence (rounding
+3/3 and 2/3, defaults 3/3 and 2/3), usually with a policy-based discount in the same sentence, e.g. "Policy does require
+keeping Euler as derived compatibility values, so this is low risk" (DriftZero PR #1 run 3, 0.35). Adding a scope
+sentence to the policy did not narrow its effect; the reviewer lowered its confidence across the board.
+
+### Noise on fleet-telemetry-v1 PR #1 (v2.3)
+
+| run | conf | finding (verbatim, abridged with ...) | judgment |
+|---|---|---|---|
+| 1 | 0.35 | "DriftSpec says health is required 0..1. Parser accepts any float without range check (e.g., -5 or 2.0) and does not raise TelemetryParseError. ..." | **real** (the hold-out added in v2.2's round fails on this PR) |
+| 1 | 0.25 | "Spec says covariance is 6x6 symmetric pose covariance. Code validates only shape (6x6) not symmetry / positive-definiteness. ..." | debatable (as before) |
+| 1 | 0.20 | "Comment asserts a server tolerance (1e-6) not present in DriftSpec or changelog. ..." | **spurious** (same as v2.1: the guarantee is in `openapi_v2.json`, which the reviewer is not given) |
+| 1 | 0.28 | "When both Euler and quaternion are supplied with inconsistent values, Euler is silently ignored and stored roll/pitch/yaw remain inconsistent with quaternion. ..." | **real**: `Pose(..., yaw=10.0, qw=1.0)` stores `yaw == 10.0` while the heading from the quaternion is 0.0 |
+| 2 | 0.25 | "Spec adds required health 0..1; code checks presence and triggers alert <0.5 but does not validate the 0..1 range. ..." | **real** (health range) |
+| 2 | 0.20 | "Shape validation raises ValueError in models._check_covariance_shape but TelemetryParseError in client._parse_covariance for the same condition (6x6). ..." | **real**, minor |
+| 3 | 0.42 | "Pose keeps Euler angles as derived values when parsed via client.py, but Pose.__post_init__ itself does not derive roll/pitch/yaw from a supplied quaternion ... the yaw etc stay at default 0.0. ..." | **real** (stale Euler) |
+| 3 | 0.28 | "DriftSpec adds health as required 0..1 with alert below 0.5. ... never validates range 0..1. ..." | **real** (health range) |
+| 3 | 0.25 | "Direct construction of TelemetryFrame with bad covariance shape raises ValueError, while parsing via client.py raises TelemetryParseError for the same condition. ..." | **real**, minor |
+
+Tally over 9 non-defaults findings: **7 real**, 1 debatable, 1 spurious, all below 0.5. The content is about as good as
+v2.2's; the confidence attached to it is not.
+
+### Reading v2.3, and the frozen prompt
+
+v2.3 is the version frozen in the code (`reviewer_version` 2.3). On this evidence it is the weakest of the three as a
+gate: it notices the right things and then rates them all below 0.5, so its verdict and the `--review-fix` trigger
+carry no signal on these diffs. Its value is in the "Possible issues (low confidence)" table, which a human has to
+read. For comparison, at ≥ 0.6 the rounding was caught in 5/6 runs by v2.1, 2/6 by v2.2 and 0/6 by v2.3. Three runs per
+cell, one model, one effort level, two to three diffs; the trend is consistent but the sample is small.
