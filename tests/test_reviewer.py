@@ -100,6 +100,12 @@ def test_diff_line_mapping():
     assert reviewer.locate(by_evidence, lines) == ("fleet_telemetry/client.py", 43)
     nowhere = f.model_copy(update={"line_hint": "999", "evidence": "+ something not in the diff"})
     assert reviewer.locate(nowhere, lines) is None
+    # a wrong line_hint pointing at a context line loses to the quoted evidence (seen live: hint 38 = `try:`)
+    wrong_hint = f.model_copy(update={"line_hint": "40"})
+    assert 40 in lines["fleet_telemetry/client.py"]
+    assert reviewer.locate(wrong_hint, lines) == ("fleet_telemetry/client.py", 43)
+    hint_only = f.model_copy(update={"line_hint": "40", "evidence": "no plus-prefixed lines"})
+    assert reviewer.locate(hint_only, lines) == ("fleet_telemetry/client.py", 40)
 
 
 def test_post_review_inline_body_and_strict(monkeypatch):

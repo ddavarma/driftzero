@@ -363,17 +363,23 @@ def locate(f: Finding, lines: dict[str, dict[int, str]]) -> tuple[str, int] | No
     path = _match_file(f.file, list(lines))
     if path is None:
         return None
+    # Quoted evidence is more reliable than the model's line number: anchor on the last quoted added line
+    # (usually the code itself, after any comment lines); use line_hint only when no evidence line matches.
     m = re.search(r"\d+", f.line_hint or "")
-    if m and int(m.group()) in lines[path]:
-        return path, int(m.group())
+    hint = int(m.group()) if m else None
+    hits: list[int] = []
     for ev in f.evidence.splitlines():
         ev = ev.strip()
         if not ev.startswith("+") or len(ev.strip("+ ")) < 4:
             continue
         needle = ev[1:].strip()
-        for n, text in sorted(lines[path].items()):
-            if needle and needle in text.strip():
-                return path, n
+        found = [n for n, text in sorted(lines[path].items()) if needle and needle in text.strip()]
+        if found:
+            hits.append(min(found, key=lambda n: abs(n - hint)) if hint else found[0])
+    if hits:
+        return path, hits[-1]
+    if hint is not None and hint in lines[path]:
+        return path, hint
     return None
 
 
@@ -398,7 +404,8 @@ def post_review(slug: str, pr_number: int | str, outcome: ReviewOutcome, diff: s
             body_only.append(f)
     high = any(f.severity == "high" for f in (res.findings if res else []))
     event = "REQUEST_CHANGES" if (strict and high) else "COMMENT"
-    head = [f"### {REVIEWER_LABEL} (`{outcome.model}` on {outcome.provider.title()}, reasoning_effort={outcome.effort})",
+    head = [f"### {REVIEWER_LABEL} v{outcome.version} (`{outcome.model}` on {outcome.provider.title()}, "
+            f"reasoning_effort={outcome.effort})",
             ""]
     if outcome.status == "incomplete":
         head.append(f"**reviewer_incomplete**: the model hit max_tokens={MAX_TOKENS} before finishing "
