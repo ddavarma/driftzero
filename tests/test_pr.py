@@ -75,7 +75,8 @@ def test_review_findings_and_collapsed_added_tests(verified):
     res, _ = verified
     body = pr.render_body(res)
     findings = body.split("## Review findings")[1].split("## API change")[0]
-    assert "**stale test name** `" in findings and "test_client_hits_v1_paths" in findings and "'v1'" in findings
+    assert "| source | severity | kind | where | finding |" in findings
+    assert "| guard (static) | – | stale test name | `" in findings and "test_client_hits_v1_paths" in findings
     changes = body.split("## Test changes, review required")[1].split("## Verification")[0]
     assert "`['/v1/robots/amr-03/telemetry/latest', '/v1/fleet/telemetry']` → `['/v2/robots" in changes
     assert "| test data |" in changes

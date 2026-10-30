@@ -138,21 +138,39 @@ def _lead(res: LoopResult, diff: repair_mod.RepairDiff, t: dict) -> list[str]:
 
 
 def _findings(res: LoopResult) -> list[str]:
+    from driftzero.reviewer import REVIEWER_LABEL
+
     g = res.guard
-    items = [f for f in (g.review_items if g else []) if f.rule in FINDING_RULES]
-    out = []
     labels = {"stale_test_name": "stale test name", "loosened": "comparison loosened", "modified_test": "test edited"}
-    for f in items:
+    rows = []
+    for f in (g.review_items if g else []):
+        if f.rule not in FINDING_RULES:
+            continue
         where = f"{f.file}::{f.test}" if f.test else f.file
         detail = f.message if f.rule != "loosened" else f"{f.message}: {_code(f.old)} → {_code(f.new)}"
-        out.append(f"- **{labels[f.rule]}** {_code(where)}: {_md(detail)}")
+        rows.append(f"| guard (static) | – | {labels[f.rule]} | {_code(where)} | {_md(detail)} |")
     for it in res.iterations:
         if not it["guard"]["ok"]:
             reasons = "; ".join(r["message"] for r in it["guard"]["rejections"])
-            out.append(f"- **rejected in iteration {it['iteration']}** by the guard: {_md(reasons)}")
+            rows.append(f"| guard (static) | rejected | iteration {it['iteration']} | – | {_md(reasons)} |")
+    rv = res.review
+    if rv is not None and rv.result is not None:
+        for f in rv.result.findings:
+            where = f.file + (f":{f.line_hint}" if f.line_hint else "")
+            rows.append(f"| {REVIEWER_LABEL} | {f.severity} | {f.category} | {_code(where)} | "
+                        f"{_md(f.explanation)} *Fix:* {_md(f.suggested_fix)} |")
+    out = ["| source | severity | kind | where | finding |", "|---|---|---|---|---|", *rows] if rows else []
+    if rv is not None:
+        status = (f"verdict **{rv.result.verdict}**, {len(rv.result.findings)} finding(s)" if rv.result
+                  else f"review failed ({_md(rv.error)})")
+        out += ["", f"{REVIEWER_LABEL}: `{rv.model}` on {rv.provider.title()}, reasoning_effort={rv.effort}: {status}; "
+                f"${rv.cost.usd or 0:.4f}, {rv.latency_s:.0f} s. It is told what the guard checks and reviews what "
+                "the guard cannot see (test-shaped library code, precision, unrequested behaviour changes, "
+                "compatibility paths)."]
     if not out:
-        return ["No findings: the guard saw no stale names, loosened comparisons or restructured tests."]
-    return ["Raised by the guard. None block the merge, but each needs a human decision.", "", *out]
+        return ["No findings: the guard saw no stale names, loosened comparisons or restructured tests, and no "
+                "model review ran."]
+    return ["None of these block the merge; each needs a human decision.", "", *out]
 
 
 def _spec_table(res: LoopResult) -> list[str]:
@@ -258,7 +276,9 @@ def _cost_section(res: LoopResult) -> list[str]:
         f"({c.reasoning_tokens:,} reasoning) |",
         f"| cost | **{usd}** (Meta rates as of 2026-09) |",
     ] + ([f"| of which DriftSpec generation | ${res.diff_cost.usd or 0:.4f}: one `{DIFF_MODEL}` call, "
-          f"{res.diff_cost.input_tokens:,} in / {res.diff_cost.output_tokens:,} out |"] if res.diff_cost else [])
+          f"{res.diff_cost.input_tokens:,} in / {res.diff_cost.output_tokens:,} out |"] if res.diff_cost else []) + ([f"| code review (open weights) | ${res.review.cost.usd or 0:.4f}: `{res.review.model}` on "
+          f"{res.review.provider.title()}, {res.review.cost.input_tokens:,} in / {res.review.cost.output_tokens:,} out "
+          f"({res.review.cost.reasoning_tokens:,} reasoning) |"] if res.review is not None else [])
 
 
 def _log_block(label: str, suite) -> list[str]:
@@ -389,6 +409,11 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
                      steps=sum(it["repair"]["steps"] for it in its), answer=answer, guard=guard, verify=vres,
                      ended_at=end["ts"], target_url=start.get("target_url"), target_slug=start.get("target_slug"),
                      diff_cost=diff_cost, command=start.get("command"))
+    from driftzero.reviewer import latest_logged
+
+    res.review = latest_logged([runs / f"{task_id}.jsonl", runs / f"{task_id}.review.jsonl"])
+    if res.review is not None and res.review.cost.usd is not None:
+        res.cost = res.cost + res.review.cost
     return res, spec_path
 
 
@@ -433,6 +458,37 @@ def open_pr(res: LoopResult, *, create: bool = True, base: str = "main", spec_pa
         fh.write(json.dumps({"ts": time.time(), "event": "pr", "task_id": res.task_id, "branch": res.worktree.branch,
                              "commit": sha, "url": url, "pr_s": pr_s}) + "\n")
     return PRResult(branch=res.worktree.branch, commit=sha, pushed=pushed, url=url, pr_s=pr_s)
+
+
+def review_pr(res: LoopResult, pr_url: str, *, provider: str = "baseten", effort: str | None = None,
+              strict: bool = False, changelog: str | None = None, outcome=None, log_path: Path | None = None) -> dict:
+    """Run the open-weights reviewer on the committed repair (or use `outcome`), post it as a PR review."""
+    from driftzero import reviewer
+
+    wt = res.worktree
+    diff = _git(wt.path, "diff", wt.base, "HEAD")
+    if outcome is None:
+        if changelog is None:
+            logs = sorted(wt.project.glob("CHANGELOG*.md"))
+            changelog = logs[0].read_text() if logs else None
+        outcome = reviewer.review(diff, [str(f) for f in (res.guard.review_items if res.guard else [])], res.spec,
+                                  changelog, provider=provider, effort=effort or reviewer.DEFAULT_EFFORT,
+                                  log_path=log_path or res.log_path, task_id=res.task_id)
+    res.review = outcome
+    slug = res.target_slug or reviewer.repo_slug(wt.root)
+    number = pr_url.rstrip("/").rsplit("/", 1)[-1]
+    posted = reviewer.post_review(slug, number, outcome, diff, strict=strict, cwd=wt.path)
+    with res.log_path.open("a") as fh:
+        fh.write(json.dumps({"ts": time.time(), "event": "review_posted", "task_id": res.task_id, **posted}) + "\n")
+    return posted
+
+
+def update_body(res: LoopResult, url: str, *, pr_s: float | None = None, spec_path: str | None = None) -> Path:
+    body_path = res.log_path.with_suffix(".pr.md")
+    body_path.write_text(render_body(res, pr_s=pr_s, spec_path=spec_path))
+    subprocess.run(["gh", "pr", "edit", url, "--body-file", str(body_path)], cwd=res.worktree.path, check=True,
+                   capture_output=True, text=True)
+    return body_path
 
 
 def regenerate(root: Path, task_id: str, update: str | None = None) -> tuple[str, Path]:

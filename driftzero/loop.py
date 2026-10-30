@@ -55,6 +55,7 @@ class LoopResult:
     target_slug: str | None = None  # owner/name, for gh pr create -R
     diff_cost: Cost | None = None   # the differ's model call, when the spec was generated
     command: str | None = None      # the CLI command that started the run (for "Reproduce")
+    review: object | None = None    # reviewer.ReviewOutcome, set after the PR is opened
 
 
 def _head(text: str, n: int = FAILURE_HEAD_LINES) -> str:

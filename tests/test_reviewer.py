@@ -1,0 +1,129 @@
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from driftzero import reviewer
+from driftzero.spec import DriftSpec
+
+BENCH = Path(__file__).resolve().parents[1] / "benchmarks" / "robotics_telemetry_drift"
+SPEC = DriftSpec.load(BENCH / "driftspec_v2.json")
+
+DIFF = """diff --git a/fleet_telemetry/client.py b/fleet_telemetry/client.py
+index 1..2 100644
+--- a/fleet_telemetry/client.py
++++ b/fleet_telemetry/client.py
+@@ -40,6 +40,7 @@ def parse_frame(payload):
+     try:
+         pos = payload["position"]
+-        roll = float(ori["roll"])
++        qx = float(ori["qx"])
++        roll, pitch, yaw = (round(v, 3) for v in to_euler(qx, qy, qz, qw))
+         pose = Pose(
+diff --git a/tests/fixtures/new.json b/tests/fixtures/new.json
+new file mode 100644
+--- /dev/null
++++ b/tests/fixtures/new.json
+@@ -0,0 +1,2 @@
++{"a": 1}
++{"b": 2}
+"""
+
+GOOD = {"verdict": "comment", "findings": [{
+    "severity": "medium", "category": "precision_loss", "file": "fleet_telemetry/client.py", "line_hint": "43",
+    "evidence": "+        roll, pitch, yaw = (round(v, 3) for v in to_euler(qx, qy, qz, qw))",
+    "explanation": "e", "suggested_fix": "f"}]}
+
+
+class FakeChat:
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.calls = []
+        self.chat = SimpleNamespace(completions=self)
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        content = self.replies.pop(0)
+        usage = SimpleNamespace(prompt_tokens=10000, completion_tokens=4000,
+                                prompt_tokens_details=SimpleNamespace(cached_tokens=2000),
+                                completion_tokens_details=SimpleNamespace(reasoning_tokens=3900))
+        msg = SimpleNamespace(content=content, reasoning_content="thinking about " + str(len(self.calls)))
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")], usage=usage)
+
+
+def test_review_parses_json_mode_and_logs_reasoning(tmp_path):
+    client = FakeChat([json.dumps(GOOD)])
+    log = tmp_path / "run.jsonl"
+    out = reviewer.review(DIFF, ["[stale_test_name] tests/x.py::test_v1"], SPEC, "changelog text", client=client,
+                          log_path=log, task_id="t")
+    kw = client.calls[0]
+    assert kw["model"] == "meta-models/muse-spark-open-1026" and kw["max_tokens"] == 8000
+    assert kw["response_format"] == {"type": "json_object"} and kw["extra_body"] == {"reasoning_effort": "high"}
+    system, user = kw["messages"][0]["content"], kw["messages"][1]["content"]
+    assert "ALREADY checks the test files" in system and '"verdict"' in system
+    assert "[stale_test_name] tests/x.py::test_v1" in user and "changelog text" in user and "```diff" in user
+    assert out.result.findings[0].category == "precision_loss" and out.attempts == 1
+    # (8000 uncached * 1.25 + 2000 cached * 0.15 + 4000 out * 4.25) / 1M
+    assert out.cost.usd == pytest.approx((8000 * 1.25 + 2000 * 0.15 + 4000 * 4.25) / 1e6)
+    rec = json.loads(log.read_text())
+    assert rec["event"] == "review" and rec["reasoning_content"] == ["thinking about 1"] and rec["cost"]["usd"]
+
+
+def test_one_retry_on_parse_failure_then_give_up():
+    ok = reviewer.review(DIFF, [], SPEC, None, client=FakeChat(["not json", json.dumps(GOOD)]))
+    assert ok.attempts == 2 and ok.result is not None and ok.error is None
+    bad = reviewer.review(DIFF, [], SPEC, None, client=FakeChat(["", '{"verdict": "maybe", "findings": []}']))
+    assert bad.result is None and bad.attempts == 2 and "attempt 2" in bad.error
+
+
+def test_fireworks_provider_switches_model_only():
+    client = FakeChat([json.dumps({"verdict": "approve", "findings": []})])
+    out = reviewer.review(DIFF, [], SPEC, None, provider="fireworks", client=client)
+    assert client.calls[0]["model"] == "accounts/fireworks/models/muse-spark-open"
+    assert out.result.verdict == "approve" and out.cost.usd is not None
+
+
+def test_prompt_does_not_mention_rounding():
+    # the demo claim depends on the reviewer finding test-shaped code unaided
+    assert "round" not in reviewer.SYSTEM.lower()
+
+
+def test_diff_line_mapping():
+    lines = reviewer.diff_new_lines(DIFF)
+    assert lines["fleet_telemetry/client.py"][43].strip().startswith("roll, pitch, yaw = (round")
+    assert 1 in lines["tests/fixtures/new.json"]
+    f = reviewer.Finding(**GOOD["findings"][0])
+    assert reviewer.locate(f, lines) == ("fleet_telemetry/client.py", 43)
+    by_evidence = f.model_copy(update={"line_hint": "", "file": "client.py"})
+    assert reviewer.locate(by_evidence, lines) == ("fleet_telemetry/client.py", 43)
+    nowhere = f.model_copy(update={"line_hint": "999", "evidence": "+ something not in the diff"})
+    assert reviewer.locate(nowhere, lines) is None
+
+
+def test_post_review_inline_body_and_strict(monkeypatch):
+    sent = []
+
+    def fake_run(cmd, input=None, **kw):
+        payload = json.loads(input)
+        sent.append(payload)
+        if payload["event"] == "REQUEST_CHANGES":
+            return SimpleNamespace(returncode=1, stdout='{"message":"Can not request changes on your own pull request"}',
+                                   stderr="")
+        return SimpleNamespace(returncode=0, stdout='{"html_url": "https://x/review"}', stderr="")
+
+    monkeypatch.setattr(reviewer.subprocess, "run", fake_run)
+    high = {"verdict": "request_changes", "findings": [
+        {**GOOD["findings"][0], "severity": "high"},
+        {**GOOD["findings"][0], "file": "elsewhere.py", "line_hint": "", "evidence": "x"}]}
+    out = reviewer.ReviewOutcome(result=reviewer.ReviewResult.model_validate(high), provider="baseten",
+                                 model="meta-models/muse-spark-open-1026", effort="high",
+                                 cost=reviewer.Cost(1, 0, 1, 0, 0.01), latency_s=3, attempts=1)
+    res = reviewer.post_review("o/r", 7, out, DIFF)
+    assert res == {"event": "COMMENT", "url": "https://x/review", "inline": 1, "body_only": 1}
+    assert sent[0]["comments"][0]["path"] == "fleet_telemetry/client.py" and sent[0]["comments"][0]["line"] == 43
+    assert "elsewhere.py" in sent[0]["body"]
+    sent.clear()
+    res = reviewer.post_review("o/r", 7, out, DIFF, strict=True)
+    assert [p["event"] for p in sent] == ["REQUEST_CHANGES", "COMMENT"] and res["event"] == "COMMENT"
+    assert "Would request changes" in sent[1]["body"]

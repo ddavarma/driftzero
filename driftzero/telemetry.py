@@ -14,6 +14,10 @@ RATES: dict[str, tuple[float, float, float]] = {
     "muse-spark-1.3": (1.25, 0.15, 4.25),
     "muse-spark-1.3-contributor": (0.10, 0.002, 0.20),
     "muse-wonder-1.0": (4.00, 0.20, 20.00),
+    # Muse Spark Open (open weights), served by Baseten / Fireworks.
+    # Rates as of 2026-09, verify at dev.meta.ai/docs/models
+    "meta-models/muse-spark-open-1026": (1.25, 0.15, 4.25),
+    "accounts/fireworks/models/muse-spark-open": (1.25, 0.15, 4.25),
 }
 
 

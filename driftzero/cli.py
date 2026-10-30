@@ -32,8 +32,11 @@ def migrate(
     max_iterations: int = typer.Option(3, help="Repair/verify attempts before giving up."),
     contributor: bool = typer.Option(False, "--contributor", help="Contributor mode (cheaper; Meta trains on it). Dev only."),
     local: bool = typer.Option(False, "--local", help="Verify locally instead of in a Modal sandbox."),
+    no_review: bool = typer.Option(False, "--no-review", help="Skip the open-weights code review of the PR."),
+    strict: bool = typer.Option(False, "--strict", help="Post REQUEST_CHANGES when the reviewer has a high finding."),
+    reviewer_provider: str = typer.Option("baseten", help="Where Muse Spark Open runs: baseten | fireworks."),
 ) -> None:
-    """(diff ->) blast radius -> Muse repair -> guard -> sandbox verify (retrying) -> push + pull request."""
+    """(diff ->) blast radius -> Muse repair -> guard -> sandbox verify (retrying) -> PR -> open-weights review."""
     import shlex
     import sys
     import time
@@ -75,8 +78,54 @@ def migrate(
     pr = pr_mod.open_pr(res, create=not no_pr, spec_path=str(spec))
     typer.echo(f"pushed {pr.branch} @ {pr.commit[:10]} to {res.target_url or 'origin'}")
     typer.echo(f"PR: {pr.url}" if pr.url else "PR: not created (--no-pr)")
+    if pr.url and not no_review:
+        typer.echo(f"=== review: Muse Spark Open on {reviewer_provider}")
+        cl_text = Path(changelog).read_text() if changelog else None
+        posted = pr_mod.review_pr(res, pr.url, provider=reviewer_provider, strict=strict, changelog=cl_text)
+        rv = res.review
+        verdict = f"{rv.result.verdict}, {len(rv.result.findings)} finding(s)" if rv.result else f"failed: {rv.error}"
+        typer.echo(f"reviewer: {verdict}; ${rv.cost.usd or 0:.4f}, {rv.latency_s:.0f}s; posted {posted['event']} "
+                   f"({posted['inline']} inline) {posted['url']}")
+        if rv.cost.usd:
+            res.cost = res.cost + rv.cost
+        pr_mod.update_body(res, pr.url, pr_s=pr.pr_s, spec_path=str(spec))
     usd = "n/a" if res.cost.usd is None else f"${res.cost.usd:.4f}"
     typer.echo(f"{len(res.iterations)} iteration(s), {usd} total, {res.wall_time_s:.0f}s loop + {pr.pr_s:.0f}s PR")
+
+
+@app.command()
+def review(
+    task: str = typer.Option(..., help="Task id of a finished run."),
+    pr: str = typer.Option(None, help="PR URL to post the review on (and refresh its body)."),
+    reviewer_provider: str = typer.Option("baseten", help="baseten | fireworks."),
+    effort: str = typer.Option("high", help="reasoning_effort for Muse Spark Open."),
+    reuse: bool = typer.Option(False, "--reuse", help="Post the most recent logged review instead of calling the model."),
+    strict: bool = typer.Option(False, "--strict", help="REQUEST_CHANGES when a finding is high severity."),
+) -> None:
+    """Open-weights code review of a finished run's diff; optionally post it on the PR."""
+    from driftzero import pr as pr_mod
+    from driftzero import reviewer as reviewer_mod
+    from driftzero.target import home_dir
+
+    home = home_dir()
+    res, spec_path = pr_mod.load_run(home, task)
+    runs = home / ".driftzero" / "runs"
+    outcome = res.review if reuse else None
+    if reuse and outcome is None:
+        raise typer.BadParameter(f"no logged review for {task}")
+    if outcome is None:
+        _, d, g, cl = reviewer_mod.inputs_for_task(home, task)
+        outcome = reviewer_mod.review(d, g, res.spec, cl, provider=reviewer_provider, effort=effort,
+                                      log_path=runs / f"{task}.review.jsonl", task_id=task)
+    rv = outcome
+    typer.echo(json.dumps({"verdict": rv.result.verdict if rv.result else None, "error": rv.error,
+                           "model": rv.model, "effort": rv.effort, "cost": rv.cost.as_dict(), "latency_s": rv.latency_s,
+                           "findings": [f.model_dump() for f in (rv.result.findings if rv.result else [])]}, indent=2))
+    if pr:
+        posted = pr_mod.review_pr(res, pr, outcome=outcome, strict=strict)
+        typer.echo(f"posted {posted['event']} ({posted['inline']} inline): {posted['url']}")
+        body, _ = pr_mod.regenerate(home, task, pr)
+        typer.echo("PR body refreshed with the review findings")
 
 
 @app.command("diff")
