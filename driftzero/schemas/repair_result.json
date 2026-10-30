@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["files_changed", "summary", "tests_run", "tests_passed", "confidence"],
+  "properties": {
+    "files_changed": {"type": "array", "items": {"type": "string"}, "description": "Repo-relative paths of every file you modified or created."},
+    "summary": {"type": "string", "description": "What you changed and why, 3-8 sentences."},
+    "tests_run": {"type": "integer", "description": "Number of tests collected in your final `pytest -q` run (0 if you did not run pytest)."},
+    "tests_passed": {"type": "integer", "description": "Number of tests that passed in that final run."},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "Your confidence the migration is complete and correct."}
+  }
+}

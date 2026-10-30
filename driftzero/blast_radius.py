@@ -558,7 +558,7 @@ _EVIDENCE = {
 }
 
 
-def _evidence(s: ImpactedSymbol) -> str:
+def evidence(s: ImpactedSymbol) -> str:
     if s.matches:
         seen: list[str] = []
         for m in s.matches:
@@ -583,7 +583,7 @@ def render(br: BlastRadius, console=None) -> None:
     prev = None
     for s in br.symbols:
         impact = "[red]direct[/red]" if s.direct else f"[yellow]+{s.depth}[/yellow]"
-        table.add_row(s.file if s.file != prev else "", s.name, s.kind, impact, _evidence(s))
+        table.add_row(s.file if s.file != prev else "", s.name, s.kind, impact, evidence(s))
         prev = s.file
     console.print(table)
     n_direct = sum(s.direct for s in br.symbols)
