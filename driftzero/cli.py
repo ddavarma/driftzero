@@ -8,6 +8,7 @@ import typer
 
 from driftzero import providers
 from driftzero import repair as repair_mod
+from driftzero import verify as verify_mod
 from driftzero.blast_radius import analyze, render
 from driftzero.spec import DriftSpec
 
@@ -83,6 +84,27 @@ def repair(
         if dry_run or not keep:
             repair_mod.remove_worktree(wt)
     if not run.ok:
+        raise typer.Exit(1)
+
+
+@app.command()
+def verify(
+    worktree: Path = typer.Option(..., exists=True, file_okay=False, help="Repair worktree (.driftzero/wt-<id>)."),
+    holdout: Path = typer.Option(None, exists=True, file_okay=False, help="Hold-out test dir in the source checkout (auto-detected)."),
+    local: bool = typer.Option(False, "--local", help="Run in a local temp copy instead of a Modal sandbox."),
+    run_id: str = typer.Option(None, help="Name for the saved logs (default: from the worktree name)."),
+) -> None:
+    """Independently run the agent's tests and the hold-out contract tests."""
+    res = verify_mod.verify(worktree, holdout, local=local)
+    rid = run_id or worktree.resolve().name.removeprefix("wt-")
+    runs = verify_mod.main_root(worktree.resolve()) / ".driftzero" / "runs"
+    saved = verify_mod.save_result(res, runs, rid)
+    typer.echo(res.summary())
+    for s in (res.agent, res.holdout):
+        for tid in s.failed_ids():
+            typer.echo(f"  FAILED [{s.name}] {tid}")
+    typer.echo(f"logs: {saved[0].parent}/{rid}.verify.json (+ xml, log)")
+    if not res.passed:
         raise typer.Exit(1)
 
 
