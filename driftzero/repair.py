@@ -23,7 +23,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -38,6 +38,12 @@ DEFAULT_TIMEOUT_S = 45 * 60
 PRIOR_FAILURE_MAX_LINES = 200
 
 
+class ReviewerResponse(BaseModel):
+    finding: int
+    action: Literal["changed", "justified"]
+    detail: str
+
+
 class RepairAnswer(BaseModel):
     """Schema-shaped final answer (mirrors schemas/repair_result.json)."""
 
@@ -46,6 +52,7 @@ class RepairAnswer(BaseModel):
     tests_run: int
     tests_passed: int
     confidence: float
+    reviewer_responses: list[ReviewerResponse] = []
 
 
 # --------------------------------------------------------------------------- worktree
@@ -156,8 +163,13 @@ def write_repair_prompt(
     project_rel: str = ".",
     python: str = sys.executable,
     out_path: Path | None = None,
+    reviewer_findings: list | None = None,
 ) -> Path:
-    """Render the Muse Code repair prompt to a file and return its path."""
+    """Render the Muse Code repair prompt to a file and return its path.
+
+    `reviewer_findings` (reviewer.Finding objects) adds a section of numbered findings from the code review,
+    to be addressed or explicitly justified, one `reviewer_responses` entry each.
+    """
     project = Path(blast_radius.repo)
     proj = project_rel.rstrip("/") or "."
     changelog = _find_changelog(project, spec)
@@ -203,7 +215,8 @@ def write_repair_prompt(
         "Never pipe pytest through `tail` or `head` (the pipe hides pytest's exit code); run `python -m pytest -q` directly.",
         "8. Do not commit, create branches, or touch git state; leave your changes in the working tree.",
         "9. Your final answer must be the JSON object required by the output schema: `tests_run` and "
-        "`tests_passed` come from your last pytest run, and `files_changed` lists every file you modified or created.",
+        "`tests_passed` come from your last pytest run, and `files_changed` lists every file you modified or created. "
+        "`reviewer_responses` is `[]` unless this prompt lists numbered reviewer findings.",
         "",
         "## DriftSpec",
         "",
@@ -230,6 +243,20 @@ def write_repair_prompt(
     if changelog:
         demoted = "\n".join("##" + ln if ln.startswith("#") else ln for ln in changelog.read_text().strip().splitlines())
         parts += ["", f"## Upstream changelog (`{changelog.name}`, includes the migration formulas)", "", demoted]
+    if reviewer_findings:
+        parts += ["", "## Reviewer findings to address or explicitly justify", "",
+                  "Your migration is already committed in this worktree, verified, and open as a pull request. An "
+                  "independent code reviewer (Muse Spark Open) raised the findings below. For EACH one, either change "
+                  "the code to address it, or leave the code as it is and justify that explicitly, citing the "
+                  "DriftSpec or changelog. The hard rules above still apply in full: never delete or weaken a test. "
+                  "If a suggested fix would require weakening a test, justify instead of applying it. Run the tests "
+                  "again before finishing. In your final answer, `reviewer_responses` must contain one entry per "
+                  "finding number below.", ""]
+        for i, f in enumerate(reviewer_findings, 1):
+            parts += [f"### Finding {i}: {f.severity} · {f.category} · `{f.file}`"
+                      + (f" (around line {f.line_hint})" if f.line_hint else ""), "",
+                      "Evidence:", "```diff", f.evidence, "```", "",
+                      f"Explanation: {f.explanation}", "", f"Suggested fix: {f.suggested_fix}", ""]
     if prior_failure:
         tail = "\n".join(prior_failure.strip().splitlines()[-PRIOR_FAILURE_MAX_LINES:])
         parts += ["", "## Previous attempt failed verification", "",

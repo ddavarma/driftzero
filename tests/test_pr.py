@@ -1,8 +1,10 @@
+import json
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from types import SimpleNamespace
 
 from driftzero import pr, repair, verify
 from driftzero.blast_radius import analyze
@@ -134,3 +136,98 @@ def test_refuses_unverified(verified):
     res.passed = False
     with pytest.raises(ValueError):
         pr.open_pr(res)
+
+
+# ---------------------------------------------------------------- --review-fix
+
+from driftzero import loop as loop_mod  # noqa: E402
+from driftzero import reviewer as reviewer_mod  # noqa: E402
+
+FINDING = reviewer_mod.Finding(severity="medium", category="test_shaped_code",
+                               file="benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py", line_hint="50",
+                               evidence="+        x = round(y, 3)", explanation="Shaped by a test.",
+                               suggested_fix="Keep full precision.")
+
+
+def first_review():
+    return reviewer_mod.ReviewOutcome(result=reviewer_mod.ReviewResult(verdict="comment", findings=[FINDING]),
+                                      provider="baseten", model="meta-models/muse-spark-open-1026", effort="high",
+                                      cost=Cost(1, 0, 1, 0, 0.03), latency_s=20, attempts=1)
+
+
+def test_review_fix_prompt_lists_findings_verbatim(verified, tmp_path):
+    res, _ = verified
+    p = repair.write_repair_prompt(res.spec, res.blast_radius, reviewer_findings=[FINDING], out_path=tmp_path / "p.md")
+    text = p.read_text()
+    assert "## Reviewer findings to address or explicitly justify" in text
+    assert "### Finding 1: medium · test_shaped_code · `benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py`" in text
+    assert "+        x = round(y, 3)" in text and "Shaped by a test." in text and "Suggested fix: Keep full precision." in text
+    assert "never delete or weaken a test" in text and "`reviewer_responses`" in text
+    plain = repair.write_repair_prompt(res.spec, res.blast_radius, out_path=tmp_path / "q.md").read_text()
+    assert "Reviewer findings" not in plain
+
+
+def test_failed_review_fix_is_reverted_and_reported(verified, monkeypatch):
+    res, _ = verified
+    pr.open_pr(res, create=False)
+    client_py = res.worktree.project / "fleet_telemetry" / "client.py"
+    before = client_py.read_text()
+
+    def failing_iteration(wt, spec, br, n, of, **kw):
+        client_py.write_text("broken = True\n")
+        rec = {"iteration": n, "kind": "review_fix", "passed": False, "wall_time_s": 1.0,
+               "repair": {"steps": 2, "duration_s": 1.0}, "cost": {}, "diff": {}, "verify": None,
+               "guard": {"ok": True, "rejections": [], "review_items": []}}
+        run = SimpleNamespace(steps=2, answer=None)
+        return rec, run, Cost(10, 0, 5, 0, 0.01), None, None, None
+
+    monkeypatch.setattr(loop_mod, "run_iteration", failing_iteration)
+    res.settings = {"holdout": None, "local": True}
+    info = pr.apply_review_fix(res, "https://github.com/o/r/pull/9", first_review(), on_line=lambda s: None)
+    assert info["reverted"] and not info["verified"] and info["commit"] is None and info["second_review"] is None
+    assert client_py.read_text() == before  # PR branch content untouched
+    body = pr.render_body(res)
+    section = body.split("## Reviewer-driven fixes")[1].split("## API change")[0]
+    assert "| 1 | medium · test_shaped_code" in section and "_no response given_" in section
+    assert "did not verify (verification failed)" in section and "still contains the first, verified version" in section
+
+
+def test_verified_review_fix_commits_pushes_and_rereviews(verified, monkeypatch):
+    res, origin = verified
+    first_sha = pr.open_pr(res, create=False).commit
+    res.target_slug = "o/r"
+    client_py = res.worktree.project / "fleet_telemetry" / "client.py"
+
+    def fixing_iteration(wt, spec, br, n, of, **kw):
+        client_py.write_text(client_py.read_text() + "\n# reviewed\n")
+        answer = repair.RepairAnswer(files_changed=[str(client_py)], summary="s", tests_run=21, tests_passed=21,
+                                     confidence=0.9, reviewer_responses=[{"finding": 1, "action": "changed",
+                                                                          "detail": "dropped the rounding"}])
+        rec = {"iteration": n, "kind": "review_fix", "passed": True, "wall_time_s": 3.0,
+               "repair": {"steps": 4, "duration_s": 2.0}, "cost": {}, "diff": {},
+               "verify": {"agent": {"passed": 21, "tests": 21}, "holdout": {"passed": 7, "tests": 7}},
+               "guard": {"ok": True, "rejections": [], "review_items": []}}
+        return rec, SimpleNamespace(steps=4, answer=answer), Cost(10, 0, 5, 0, 0.02), None, res.guard, res.verify
+
+    def fake_review_pr(r, url, **kw):
+        r.review = reviewer_mod.ReviewOutcome(result=reviewer_mod.ReviewResult(verdict="approve", findings=[]),
+                                              provider="baseten", model="m", effort="high", cost=Cost(1, 0, 1, 0, 0.02),
+                                              latency_s=10, attempts=1)
+        return {"event": "COMMENT", "url": url + "#r2", "inline": 0, "body_only": 0}
+
+    monkeypatch.setattr(loop_mod, "run_iteration", fixing_iteration)
+    monkeypatch.setattr(pr, "review_pr", fake_review_pr)
+    res.settings = {"holdout": None, "local": True}
+    info = pr.apply_review_fix(res, "https://github.com/o/r/pull/9", first_review(), on_line=lambda s: None)
+    assert info["verified"] and info["prev_commit"] == first_sha and info["commit"] != first_sha
+    assert git(origin, "rev-parse", f"refs/heads/{res.worktree.branch}").strip() == info["commit"]
+    assert list(info["hunks"]) == [f"{BENCH_REL}/fleet_telemetry/client.py"]
+    assert info["second_review"]["verdict"] == "approve"
+    body = pr.render_body(res)
+    section = body.split("## Reviewer-driven fixes")[1].split("## API change")[0]
+    assert "**changed**: dropped the rounding" in section
+    assert f"(https://github.com/o/r/commit/{info['commit']})" in section and "`client.py` @@" in section
+    assert "agent suite 21/21, hold-out 7/7" in section and "Second review: verdict **approve**, 0 finding(s)" in section
+    assert "Muse Spark Open reviewer (pass 2)" in body
+    events = [json.loads(line)["event"] for line in res.log_path.read_text().splitlines()]
+    assert events[-1] == "review_fix" and "iteration" in events

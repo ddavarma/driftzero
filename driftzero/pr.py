@@ -154,10 +154,12 @@ def _findings(res: LoopResult) -> list[str]:
             reasons = "; ".join(r["message"] for r in it["guard"]["rejections"])
             rows.append(f"| guard (static) | rejected | iteration {it['iteration']} | – | {_md(reasons)} |")
     rv = res.review
+    second = bool(res.review_fix and res.review_fix.get("second_review"))
+    pass_label = " (pass 2)" if second else ""
     if rv is not None and rv.result is not None:
         for f in rv.result.findings:
             where = f.file + (f":{f.line_hint}" if f.line_hint else "")
-            rows.append(f"| {REVIEWER_LABEL} | {f.severity} | {f.category} | {_code(where)} | "
+            rows.append(f"| {REVIEWER_LABEL}{pass_label} | {f.severity} | {f.category} | {_code(where)} | "
                         f"{_md(f.explanation)} *Fix:* {_md(f.suggested_fix)} |")
     out = ["| source | severity | kind | where | finding |", "|---|---|---|---|---|", *rows] if rows else []
     if rv is not None:
@@ -168,7 +170,7 @@ def _findings(res: LoopResult) -> list[str]:
             status = f"verdict **{rv.result.verdict}**, {len(rv.result.findings)} finding(s)"
         else:
             status = f"review failed ({_md(rv.error)})"
-        out += ["", f"{REVIEWER_LABEL}: `{rv.model}` on {rv.provider.title()}, reasoning_effort={rv.effort}: {status}; "
+        out += ["", f"{REVIEWER_LABEL}{pass_label}: `{rv.model}` on {rv.provider.title()}, reasoning_effort={rv.effort}: {status}; "
                 f"${rv.cost.usd or 0:.4f}, {rv.latency_s:.0f} s. It is told what the guard checks and reviews what "
                 "the guard cannot see (test-shaped library code, precision, unrequested behaviour changes, "
                 "compatibility paths)."]
@@ -176,6 +178,52 @@ def _findings(res: LoopResult) -> list[str]:
         return ["No findings: the guard saw no stale names, loosened comparisons or restructured tests, and no "
                 "model review ran."]
     return ["None of these block the merge; each needs a human decision.", "", *out]
+
+
+def _review_fix_section(res: LoopResult) -> list[str]:
+    from driftzero.reviewer import REVIEWER_LABEL, _match_file
+
+    rf = res.review_fix
+    if not rf:
+        return []
+    slug = res.target_slug or ""
+    commit_url = f"https://github.com/{slug}/commit/{rf['commit']}" if rf.get("commit") and slug else None
+    responses = {r["finding"]: r for r in rf.get("responses") or []}
+    hunks: dict[str, list[str]] = rf.get("hunks") or {}
+    out = [f"The first review ({REVIEWER_LABEL}, verdict **{rf['first_verdict']}**) raised "
+           f"{len(rf['findings'])} finding(s), at least one medium or high. DriftZero ran one extra repair iteration "
+           f"(iteration {rf['iteration']}, the hard cap) with the findings verbatim, asking Muse to address each or "
+           "justify leaving it, under the same hard rules, then re-ran the guard, sandbox verification with "
+           "hold-outs, and a second review.", "",
+           "| # | finding | agent's response | change |", "|---|---|---|---|"]
+    for i, f in enumerate(rf["findings"], 1):
+        r = responses.get(i)
+        resp = f"**{r['action']}**: {_md(r['detail'])}" if r else "_no response given_"
+        path = _match_file(f["file"], list(hunks)) if hunks else None
+        if path and rf.get("verified"):
+            refs = ", ".join(f"[`{Path(path).name}` {_md(h)}]({commit_url})" if commit_url else f"`{Path(path).name}` {_md(h)}"
+                             for h in hunks[path])
+        else:
+            refs = "–"
+        out.append(f"| {i} | {f['severity']} · {f['category']} · {_code(f['file'])}: {_md(f['explanation'])} | "
+                   f"{resp} | {refs} |")
+    v = rf.get("verify") or {}
+    if rf.get("no_change"):
+        out += ["", "Result: the agent changed no code (it justified every finding); nothing new was pushed and no "
+                "second review ran."]
+    elif rf.get("verified"):
+        out += ["", f"Result: guard ok; agent suite {v['agent']['passed']}/{v['agent']['tests']}, hold-out "
+                f"{v['holdout']['passed']}/{v['holdout']['tests']}; pushed as "
+                + (f"[`{rf['commit'][:10]}`]({commit_url})" if commit_url else f"`{rf['commit'][:10]}`") + "."]
+    else:
+        why = "guard rejected it" if not (rf.get("guard_ok", True)) else "verification failed"
+        out += ["", f"Result: the extra iteration did not verify ({why}); the worktree was reset and this PR still "
+                "contains the first, verified version."]
+    sr = rf.get("second_review")
+    if sr:
+        out += ["", f"Second review: verdict **{sr['verdict']}**, {sr['findings']} finding(s) (listed under Review "
+                "findings above)."]
+    return out
 
 
 def _spec_table(res: LoopResult) -> list[str]:
@@ -354,6 +402,7 @@ def render_body(res: LoopResult, *, pr_s: float | None = None, spec_path: str | 
         "",
         "## Agent's own summary", "", summary, "",
         "## Review findings", "", *_findings(res), "",
+        *(["## Reviewer-driven fixes", "", *_review_fix_section(res), ""] if res.review_fix else []),
         "## API change (DriftSpec)", "", *_spec_table(res), "",
         "## Blast radius", "", *_blast_table(res), "",
         "## Test changes, review required", "", *_test_changes(res), "",
@@ -417,6 +466,7 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
     from driftzero.reviewer import latest_logged
 
     res.review = latest_logged([runs / f"{task_id}.jsonl", runs / f"{task_id}.review.jsonl"])
+    res.review_fix = next((e for e in reversed(events) if e["event"] == "review_fix"), None)
     if res.review is not None and res.review.cost.usd is not None:
         res.cost = res.cost + res.review.cost
     return res, spec_path
@@ -424,12 +474,12 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
 
 # --------------------------------------------------------------------------- git / gh
 
-def commit_and_push(res: LoopResult) -> tuple[str, bool]:
+def commit_and_push(res: LoopResult, message: str | None = None) -> tuple[str, bool]:
     wt = res.worktree
     _git(wt.path, "add", "-A")  # hidden hold-outs are skip-worktree, so they stay out of the commit
-    msg = f"{title(res)}\n\n" + (res.answer.summary if res.answer else "") + \
-          f"\n\nRepaired by Muse Code ({res.model}); verified: " + \
-          (res.verify.summary() if res.verify else "n/a") + f"\nDriftZero-Task: {res.task_id}\n"
+    msg = message or (f"{title(res)}\n\n" + (res.answer.summary if res.answer else "") +
+                      f"\n\nRepaired by Muse Code ({res.model}); verified: " +
+                      (res.verify.summary() if res.verify else "n/a") + f"\nDriftZero-Task: {res.task_id}\n")
     _git(wt.path, "commit", "-q", "-m", msg)
     sha = _git(wt.path, "rev-parse", "HEAD")
     _git(wt.path, "push", "-q", "-u", "origin", wt.branch)
@@ -487,6 +537,58 @@ def review_pr(res: LoopResult, pr_url: str, *, provider: str = "baseten", effort
     with res.log_path.open("a") as fh:
         fh.write(json.dumps({"ts": time.time(), "event": "review_posted", "task_id": res.task_id, **posted}) + "\n")
     return posted
+
+
+def fix_hunks(cwd: Path, a: str, b: str) -> dict[str, list[str]]:
+    """file -> hunk headers ("@@ -45,7 +45,6 @@") changed between two commits."""
+    out: dict[str, list[str]] = {}
+    path = None
+    for line in _git(cwd, "diff", "-U0", a, b).splitlines():
+        if line.startswith("+++ "):
+            path = None if line[4:] == "/dev/null" else line[4:].removeprefix("b/")
+        elif line.startswith("--- ") and line[4:] != "/dev/null" and path is None:
+            pass
+        elif line.startswith("@@") and path:
+            out.setdefault(path, []).append(line.split(" @@")[0] + " @@")
+    return out
+
+
+def apply_review_fix(res: LoopResult, pr_url: str, first, *, provider: str = "baseten", strict: bool = False,
+                     changelog: str | None = None, on_line=print) -> dict:
+    """--review-fix: one extra repair iteration on the first review's findings, then guard, verify, push, re-review."""
+    from driftzero.loop import review_fix_iteration
+
+    wt = res.worktree
+    findings = list(first.result.findings)
+    prev = _git(wt.path, "rev-parse", "HEAD")
+    rec = review_fix_iteration(res, findings, on_line=on_line)
+    answer = rec.get("answer")
+    info = {"first_verdict": first.verdict_label, "findings": [f.model_dump() for f in findings],
+            "responses": [r.model_dump() for r in (answer.reviewer_responses if answer else [])],
+            "iteration": rec["iteration"], "verified": rec["passed"], "reverted": rec["reverted"],
+            "guard_ok": rec["guard"]["ok"], "verify": rec["verify"], "prev_commit": prev, "commit": None,
+            "hunks": {}, "second_review": None}
+    info["no_change"] = rec["passed"] and not _git(wt.path, "status", "--porcelain")
+    if info["no_change"]:
+        on_line("review fix: verified, but the agent changed nothing (every finding justified); no second review")
+    elif rec["passed"]:
+        msg = (f"Address reviewer findings ({len(findings)})\n\n"
+               + "\n".join(f"- {r.action} #{r.finding}: {r.detail}" for r in (answer.reviewer_responses if answer else []))
+               + f"\n\nVerified: {res.verify.summary() if res.verify else 'n/a'}\nDriftZero-Task: {res.task_id}\n")
+        sha, _ = commit_and_push(res, message=msg)
+        info["commit"] = sha
+        info["hunks"] = fix_hunks(wt.path, prev, sha)
+        on_line(f"pushed review fix {sha[:10]}; second review")
+        posted = review_pr(res, pr_url, provider=provider, strict=strict, changelog=changelog)
+        rv = res.review
+        info["second_review"] = {"verdict": rv.verdict_label, "findings": len(rv.result.findings) if rv.result else 0,
+                                 "url": posted["url"], "usd": rv.cost.usd}
+        if rv.cost.usd:
+            res.cost = res.cost + rv.cost
+    res.review_fix = info
+    with res.log_path.open("a") as fh:
+        fh.write(json.dumps({"ts": time.time(), "event": "review_fix", "task_id": res.task_id, **info}, default=str) + "\n")
+    return info
 
 
 def update_body(res: LoopResult, url: str, *, pr_s: float | None = None, spec_path: str | None = None) -> Path:

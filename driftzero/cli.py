@@ -35,6 +35,9 @@ def migrate(
     no_review: bool = typer.Option(False, "--no-review", help="Skip the open-weights code review of the PR."),
     strict: bool = typer.Option(False, "--strict", help="Post REQUEST_CHANGES when the reviewer has a high finding."),
     reviewer_provider: str = typer.Option("baseten", help="Where Muse Spark Open runs: baseten | fireworks."),
+    review_fix: bool = typer.Option(False, "--review-fix",
+                                    help="If the review has a medium/high finding, run ONE extra repair iteration on it, "
+                                         "re-verify, push, and review again."),
 ) -> None:
     """(diff ->) blast radius -> Muse repair -> guard -> sandbox verify (retrying) -> PR -> open-weights review."""
     import shlex
@@ -50,6 +53,7 @@ def migrate(
         raise typer.BadParameter("give --spec, or --changelog and/or --openapi-v1 + --openapi-v2")
     if not target_mod.is_url(repo) and not Path(repo).is_dir():
         raise typer.BadParameter(f"--repo {repo!r} is neither a directory nor a git URL")
+    t_start = time.monotonic()
     command = "driftzero " + " ".join(shlex.quote(a) for a in sys.argv[1:])
     diff_info = None
     if not spec:
@@ -89,8 +93,19 @@ def migrate(
         if rv.cost.usd:
             res.cost = res.cost + rv.cost
         pr_mod.update_body(res, pr.url, pr_s=pr.pr_s, spec_path=str(spec))
+        actionable = rv.result is not None and any(f.severity in ("medium", "high") for f in rv.result.findings)
+        if review_fix and actionable:
+            typer.echo("=== review fix: one extra repair iteration on the reviewer's findings")
+            info = pr_mod.apply_review_fix(res, pr.url, rv, provider=reviewer_provider, strict=strict,
+                                           changelog=cl_text)
+            sr = info.get("second_review")
+            typer.echo(f"review fix: {'verified, pushed ' + info['commit'][:10] if info['verified'] else 'not verified, reverted'}"
+                       + (f"; second review: {sr['verdict']}, {sr['findings']} finding(s)" if sr else ""))
+            pr_mod.update_body(res, pr.url, pr_s=pr.pr_s, spec_path=str(spec))
+        elif review_fix:
+            typer.echo("review fix: nothing medium/high to address")
     usd = "n/a" if res.cost.usd is None else f"${res.cost.usd:.4f}"
-    typer.echo(f"{len(res.iterations)} iteration(s), {usd} total, {res.wall_time_s:.0f}s loop + {pr.pr_s:.0f}s PR")
+    typer.echo(f"{len(res.iterations)} iteration(s), {usd} total, {time.monotonic() - t_start:.0f}s wall end to end")
 
 
 @app.command()

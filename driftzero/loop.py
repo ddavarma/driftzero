@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -55,7 +56,9 @@ class LoopResult:
     target_slug: str | None = None  # owner/name, for gh pr create -R
     diff_cost: Cost | None = None   # the differ's model call, when the spec was generated
     command: str | None = None      # the CLI command that started the run (for "Reproduce")
-    review: object | None = None    # reviewer.ReviewOutcome, set after the PR is opened
+    review: object | None = None    # reviewer.ReviewOutcome, set after the PR is opened (latest pass)
+    review_fix: dict | None = None  # the --review-fix pass: first review's findings, responses, commits, outcome
+    settings: dict = field(default_factory=dict)  # holdout, local, dry_run, contributor, model, effort, max_steps
 
 
 def _head(text: str, n: int = FAILURE_HEAD_LINES) -> str:
@@ -150,57 +153,16 @@ def repair_until_verified(
     steps = 0
     answer = guard = vres = None
     for n in range(1, max_iterations + 1):
-        it_start = time.monotonic()
-        on_line(f"=== iteration {n}/{max_iterations}: repair")
-        prompt = repair_mod.write_repair_prompt(spec, br, prior_failure, project_rel=wt.project_rel,
-                                                out_path=runs / f"{task_id}.prompt-i{n}.md")
-        run = repair_mod.run_muse(wt, prompt, contributor=contributor, run_id=f"{task_id}.muse-i{n}",
-                                  dry_run=dry_run, model=model, max_steps=max_steps, effort=effort, on_line=on_line)
-        cost = cost_from_usage(run.usage, default_model=model, contributor=contributor, free=dry_run)
+        record, run, cost, diff, guard, vres = run_iteration(
+            wt, spec, br, n, max_iterations, prior_failure=prior_failure, runs=runs, task_id=task_id,
+            holdout=holdout, local=local, dry_run=dry_run, contributor=contributor, model=model,
+            max_steps=max_steps, effort=effort, on_line=on_line)
         total = total + cost
         steps += run.steps
         answer = run.answer or answer
-        diff = repair_mod.collect_diff(wt)
-        (runs / f"{task_id}.i{n}.diff").write_text(diff.patch)
-
-        on_line(f"=== iteration {n}/{max_iterations}: guard")
-        guard = guard_check(wt, diff)
-        on_line(f"guard {'ok' if guard.ok else 'REJECTED'}: {len(guard.rejections)} rejection(s), "
-                f"{len(guard.review_items)} item(s) for review")
-        for f in guard.rejections:
-            on_line(f"  reject {f}")
-
-        vres = None
-        if guard.ok and holdout is not None:
-            on_line(f"=== iteration {n}/{max_iterations}: verify ({'local' if local else 'modal'})")
-            vres = verify_mod.verify(wt.path, holdout, local=local, project_rel=wt.project_rel, on_line=on_line)
-            verify_mod.save_result(vres, runs, f"{task_id}.i{n}")
-            on_line(vres.summary())
-        passed = bool(guard.ok and vres and vres.passed)
-
-        record = {
-            "iteration": n,
-            "repair": {"terminal": run.terminal, "exit_code": run.exit_code, "steps": run.steps,
-                       "tool_calls": len(run.commands), "duration_s": run.duration_s,
-                       "answer": run.answer.model_dump() if run.answer else None},
-            "cost": {**cost.as_dict(), "provider": "echo" if dry_run else "meta", "model": None if dry_run else model,
-                     "contributor": contributor},
-            "diff": {"files": len(diff.files), "added": diff.added, "deleted": diff.deleted},
-            "guard": guard.as_dict(),
-            "verify": None if vres is None else {
-                "passed": vres.passed, "backend": vres.backend, "sandbox_id": vres.sandbox_id,
-                "wall_time_s": vres.wall_time_s,
-                "agent": {"exit_code": vres.agent.exit_code, "tests": vres.agent.tests,
-                          "passed": vres.agent.passed_count, "failed": vres.agent.failed_ids()},
-                "holdout": {"exit_code": vres.holdout.exit_code, "tests": vres.holdout.tests,
-                            "passed": vres.holdout.passed_count, "failed": vres.holdout.failed_ids()}},
-            "wall_time_s": round(time.monotonic() - it_start, 1),
-            "passed": passed,
-        }
+        passed = record["passed"]
         iterations.append(record)
         log("iteration", **record)
-        on_line(f"iteration {n}: {'PASSED' if passed else 'failed'}; ${cost.usd or 0:.4f} "
-                f"({cost.input_tokens} in, {cost.cached_pct:.0f}% cached, {cost.output_tokens} out)")
         if passed:
             break
         if not guard.ok:
@@ -218,7 +180,102 @@ def repair_until_verified(
     return LoopResult(task_id=task_id, worktree=wt, spec=spec, blast_radius=br, passed=passed, iterations=iterations,
                       log_path=log_path, cost=total, wall_time_s=wall, model=model, steps=steps, answer=answer,
                       guard=guard, verify=vres, hidden_holdout_files=hidden, ended_at=time.time(),
-                      target_url=target.url, target_slug=target.slug, diff_cost=diff_cost, command=command)
+                      target_url=target.url, target_slug=target.slug, diff_cost=diff_cost, command=command,
+                      settings={"holdout": str(holdout) if holdout else None, "local": local, "dry_run": dry_run,
+                                "contributor": contributor, "model": model, "effort": effort, "max_steps": max_steps})
+
+
+def run_iteration(wt, spec, br, n: int, of: int, *, prior_failure: str | None, runs: Path, task_id: str,
+                  holdout: Path | None, local: bool, dry_run: bool, contributor: bool, model: str, max_steps: int,
+                  effort: str, on_line: Callable[[str], None], reviewer_findings: list | None = None,
+                  kind: str = "repair"):
+    """One repair -> guard -> verify pass in the worktree. Returns (record, run, cost, diff, guard, verify)."""
+    it_start = time.monotonic()
+    label = f"iteration {n}/{of}" if kind == "repair" else f"iteration {n} (review fix)"
+    on_line(f"=== {label}: repair")
+    prompt = repair_mod.write_repair_prompt(spec, br, prior_failure, project_rel=wt.project_rel,
+                                            out_path=runs / f"{task_id}.prompt-i{n}.md",
+                                            reviewer_findings=reviewer_findings)
+    run = repair_mod.run_muse(wt, prompt, contributor=contributor, run_id=f"{task_id}.muse-i{n}",
+                              dry_run=dry_run, model=model, max_steps=max_steps, effort=effort, on_line=on_line)
+    cost = cost_from_usage(run.usage, default_model=model, contributor=contributor, free=dry_run)
+    diff = repair_mod.collect_diff(wt)
+    (runs / f"{task_id}.i{n}.diff").write_text(diff.patch)
+
+    on_line(f"=== {label}: guard")
+    guard = guard_check(wt, diff)
+    on_line(f"guard {'ok' if guard.ok else 'REJECTED'}: {len(guard.rejections)} rejection(s), "
+            f"{len(guard.review_items)} item(s) for review")
+    for f in guard.rejections:
+        on_line(f"  reject {f}")
+
+    vres = None
+    if guard.ok and holdout is not None:
+        on_line(f"=== {label}: verify ({'local' if local else 'modal'})")
+        vres = verify_mod.verify(wt.path, holdout, local=local, project_rel=wt.project_rel, on_line=on_line)
+        verify_mod.save_result(vres, runs, f"{task_id}.i{n}")
+        on_line(vres.summary())
+    passed = bool(guard.ok and vres and vres.passed)
+    record = {
+        "iteration": n,
+        "kind": kind,
+        "repair": {"terminal": run.terminal, "exit_code": run.exit_code, "steps": run.steps,
+                   "tool_calls": len(run.commands), "duration_s": run.duration_s,
+                   "answer": run.answer.model_dump() if run.answer else None},
+        "cost": {**cost.as_dict(), "provider": "echo" if dry_run else "meta", "model": None if dry_run else model,
+                 "contributor": contributor},
+        "diff": {"files": len(diff.files), "added": diff.added, "deleted": diff.deleted},
+        "guard": guard.as_dict(),
+        "verify": None if vres is None else {
+            "passed": vres.passed, "backend": vres.backend, "sandbox_id": vres.sandbox_id,
+            "wall_time_s": vres.wall_time_s,
+            "agent": {"exit_code": vres.agent.exit_code, "tests": vres.agent.tests,
+                      "passed": vres.agent.passed_count, "failed": vres.agent.failed_ids()},
+            "holdout": {"exit_code": vres.holdout.exit_code, "tests": vres.holdout.tests,
+                        "passed": vres.holdout.passed_count, "failed": vres.holdout.failed_ids()}},
+        "wall_time_s": round(time.monotonic() - it_start, 1),
+        "passed": passed,
+    }
+    on_line(f"{label}: {'PASSED' if passed else 'failed'}; ${cost.usd or 0:.4f} "
+            f"({cost.input_tokens} in, {cost.cached_pct:.0f}% cached, {cost.output_tokens} out)")
+    return record, run, cost, diff, guard, vres
+
+
+def review_fix_iteration(res: LoopResult, findings: list, *, on_line: Callable[[str], None] = print) -> dict:
+    """One extra repair pass in the same worktree addressing reviewer findings, then guard and verify.
+
+    Hard cap: called at most once per run (by `driftzero migrate --review-fix`). If it does not verify, the
+    worktree is reset to the already-pushed commit, so the open PR is left exactly as it was.
+    """
+    st = res.settings
+    wt = res.worktree
+    n = len(res.iterations) + 1
+    record, run, cost, diff, guard, vres = run_iteration(
+        wt, res.spec, res.blast_radius, n, n, prior_failure=None, runs=wt.runs_dir, task_id=res.task_id,
+        holdout=Path(st["holdout"]) if st.get("holdout") else None, local=st.get("local", False),
+        dry_run=st.get("dry_run", False), contributor=st.get("contributor", False),
+        model=st.get("model", res.model), max_steps=st.get("max_steps", repair_mod.DEFAULT_MAX_STEPS),
+        effort=st.get("effort", repair_mod.DEFAULT_EFFORT), on_line=on_line, reviewer_findings=findings,
+        kind="review_fix")
+    res.iterations.append(record)
+    res.cost = res.cost + cost
+    res.steps += run.steps
+    res.wall_time_s = round(res.wall_time_s + record["wall_time_s"], 1)
+    reverted = False
+    if record["passed"]:
+        res.answer = run.answer or res.answer
+        res.guard, res.verify = guard, vres
+    else:
+        # keep the PR on the verified first version
+        subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=wt.path, check=True)
+        subprocess.run(["git", "clean", "-q", "-fd"], cwd=wt.path, check=True)
+        reverted = True
+    with res.log_path.open("a") as fh:
+        fh.write(json.dumps({"ts": time.time(), "event": "iteration", "task_id": res.task_id, **record,
+                             "reverted": reverted}, default=str) + "\n")
+    record["reverted"] = reverted
+    record["answer"] = run.answer
+    return record
 
 
 if __name__ == "__main__":
