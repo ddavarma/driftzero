@@ -30,4 +30,4 @@ def test_client_hits_v1_paths(client):
     snapshot = client.fleet_snapshot()
     assert frame.robot_id == "amr-03"
     assert len(snapshot) == 4
-    assert client.calls == ["/v1/robots/amr-03/telemetry/latest", "/v1/fleet/telemetry"]
+    assert client.calls == ["/v2/robots/amr-03/telemetry/latest", "/v2/fleet/telemetry"]

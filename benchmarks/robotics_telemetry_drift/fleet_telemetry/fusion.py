@@ -6,6 +6,7 @@ from typing import Sequence
 import numpy as np
 
 from fleet_telemetry.models import TelemetryFrame
+from fleet_telemetry.orientation import heading_deg
 
 
 def position_variance(frame: TelemetryFrame) -> float:
@@ -30,7 +31,7 @@ def fuse_heading(frames: Sequence[TelemetryFrame]) -> float:
     if not frames:
         raise ValueError("need at least one frame")
     weights = np.array([1.0 / position_variance(f) for f in frames])
-    yaws = np.radians([f.pose.yaw for f in frames])
+    yaws = np.radians([heading_deg(f.pose) for f in frames])
     s = (weights * np.sin(yaws)).sum()
     c = (weights * np.cos(yaws)).sum()
     return float(np.degrees(np.arctan2(s, c)) % 360.0)
