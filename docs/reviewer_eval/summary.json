@@ -1,0 +1,168 @@
+[
+  {
+    "task": "20261030-023010-e61999",
+    "pr": "DriftZero PR #1",
+    "run": 1,
+    "effort": "high",
+    "verdict": "comment",
+    "status": "ok",
+    "categories": [
+      "low:test_shaped_code",
+      "medium:incomplete_migration",
+      "medium:precision_loss"
+    ],
+    "rounding": true,
+    "defaults": true,
+    "usd": 0.02006615,
+    "output_tokens": 4270,
+    "latency_s": 29.2,
+    "findings": [
+      {
+        "severity": "medium",
+        "category": "precision_loss",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "29",
+        "evidence": "+        # Compatibility Euler angles, quoted to 1e-3 deg (v1 wire resolution).\n+        roll, pitch, yaw = (round(v, 3) for v in quaternion_to_euler_deg(qx, qy, qz, qw))",
+        "explanation": "Rounding derived Euler angles to 1e-3 deg is not in the DriftSpec/changelog and loses precision versus the documented direct quaternion-to-Euler conversion. The comment justifies it as \"v1 wire resolution\" which neither document supports. It also creates divergence between pose.yaw (rounded) and heading_deg() (full-precision quaternion formula) and is shaped to make test_parse_frame_reads_pose_and_noise's exact equality `pose.yaw == 87.0` pass instead of using approx.",
+        "suggested_fix": "Remove the round(v,3) and store full double precision from quaternion_to_euler_deg; update any tests expecting exact equality to use pytest.approx if needed, or document rounding as intentional compat behavior."
+      },
+      {
+        "severity": "medium",
+        "category": "incomplete_migration",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/models.py",
+        "line_hint": "44",
+        "evidence": "+    covariance: Covariance | None = None  # 6x6 symmetric pose covariance, row-major\n+    health: float = 1.0  # composite health score, 0..1",
+        "explanation": "Spec marks both fields as required in v2, but the dataclass makes them optional with defaults (None and 1.0). A manually constructed TelemetryFrame missing health silently appears healthy and missing covariance silently appears valid, bypassing the strict validation in client.parse_frame. This weakens the required-field contract.",
+        "suggested_fix": "Make covariance and health required fields without defaults (or validate in __post_init__), so construction without them fails. Keep defaults only in a separate v1 compat factory if needed."
+      },
+      {
+        "severity": "low",
+        "category": "test_shaped_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/orientation.py",
+        "line_hint": "45",
+        "evidence": "+def _quat_of(pose: Pose) -> tuple[float, float, float, float]:\n+    if pose.has_quaternion:\n+        assert pose.qx is not None and pose.qy is not None and pose.qz is not None and pose.qw is not None\n+        return (pose.qx, pose.qy, pose.qz, pose.qw)\n+    return euler_to_quaternion_deg(pose.roll, pose.pitch, pose.yaw)",
+        "explanation": "Fallback to Euler angles when Pose has no quaternion is retained solely to keep the unchanged Euler-based orientation tests (test_zero_angles_is_identity, test_yaw_90_points_along_map_y, tilt tests) passing. The v2 spec replaces Euler with quaternion; production rotation should be built from the quaternion only. The fallback hides incomplete migration and keeps a v1 code path alive.",
+        "suggested_fix": "Keep the fallback only behind an explicit test helper or make quaternion required for rotation_matrix/heading_deg/tilt_deg, raising if missing, and update test helpers to construct quaternions via euler_to_quaternion_deg."
+      }
+    ]
+  },
+  {
+    "task": "20261030-023010-e61999",
+    "pr": "DriftZero PR #1",
+    "run": 2,
+    "effort": "high",
+    "verdict": "comment",
+    "status": "ok",
+    "categories": [
+      "low:silent_behavior_change",
+      "medium:test_shaped_code"
+    ],
+    "rounding": true,
+    "defaults": true,
+    "usd": 0.032735400000000005,
+    "output_tokens": 7251,
+    "latency_s": 44.4,
+    "findings": [
+      {
+        "severity": "medium",
+        "category": "test_shaped_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "32",
+        "evidence": "+        # Compatibility Euler angles, quoted to 1e-3 deg (v1 wire resolution).\n+        roll, pitch, yaw = (round(v, 3) for v in quaternion_to_euler_deg(qx, qy, qz, qw))",
+        "explanation": "Derived Euler angles are rounded to 1e-3 deg with comment about v1 wire resolution. Neither the DriftSpec nor the changelog mentions any quantization or rounding; the spec only requires R = Rz(yaw)Ry(pitch)Rx(roll) be unchanged via quaternion. Rounding discards precision and exists only to make the unchanged test `frame.pose.yaw == 87.0` pass despite fixture quaternions being quantized to 6 decimals, while rotation_matrix correctly uses the quaternion.",
+        "suggested_fix": "Store the full double from quaternion_to_euler_deg without round(); change the exact equality test to use pytest.approx if needed."
+      },
+      {
+        "severity": "low",
+        "category": "silent_behavior_change",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/models.py",
+        "line_hint": "43",
+        "evidence": "+    covariance: Covariance | None = None  # 6x6 symmetric pose covariance, row-major\n+    health: float = 1.0  # composite health score, 0..1",
+        "explanation": "v2 lists covariance and health as required (required:true), but the model makes them optional with defaults None/1.0. Manual construction outside parse_frame can silently appear valid/healthy when required data is missing, masking incomplete payloads.",
+        "suggested_fix": "Make health and covariance required fields (no defaults) and/or validate in __post_init__; keep defaults only in test helpers if needed."
+      }
+    ]
+  },
+  {
+    "task": "20261030-023010-e61999",
+    "pr": "DriftZero PR #1",
+    "run": 3,
+    "effort": "high",
+    "verdict": "comment",
+    "status": "ok",
+    "categories": [
+      "low:incomplete_migration",
+      "low:test_shaped_code"
+    ],
+    "rounding": true,
+    "defaults": true,
+    "usd": 0.02346615,
+    "output_tokens": 5070,
+    "latency_s": 33.3,
+    "findings": [
+      {
+        "severity": "low",
+        "category": "test_shaped_code",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/client.py",
+        "line_hint": "28",
+        "evidence": "+        # Compatibility Euler angles, quoted to 1e-3 deg (v1 wire resolution).\n+        roll, pitch, yaw = (round(v, 3) for v in quaternion_to_euler_deg(qx, qy, qz, qw))",
+        "explanation": "Neither DriftSpec nor changelog documents a v1 wire resolution of 1e-3 deg or a rounding requirement. The rounding to 3 decimals is explained only by the unchanged test expecting frame.pose.yaw == 87.0 exactly; without it the quaternion round-trip would be approx 87.0 but not exactly equal. The comment is an unsupported justification for test-shaped code.",
+        "suggested_fix": "Remove the round(v,3) wrapping and rely on the quaternion-derived value directly; update comment to note it is a compatibility derivation only, or make the test use pytest.approx if exact equality is not required by spec."
+      },
+      {
+        "severity": "low",
+        "category": "incomplete_migration",
+        "file": "benchmarks/robotics_telemetry_drift/fleet_telemetry/models.py",
+        "line_hint": "43",
+        "evidence": "+    covariance: Covariance | None = None  # 6x6 symmetric pose covariance, row-major\n+    health: float = 1.0  # composite health score, 0..1",
+        "explanation": "DriftSpec marks covariance and health as required on TelemetryFrame. The dataclass makes them optional with benign defaults (None/1.0), so construction outside parse_frame can silently hide a missing required field instead of failing. parse_frame does validate, but the model itself no longer enforces the v2 contract.",
+        "suggested_fix": "Make covariance and health required fields without defaults (or default to None and validate), so a missing required field cannot be masked by a default healthy value."
+      }
+    ]
+  },
+  {
+    "task": "20261030-031042-391b51",
+    "pr": "fleet-telemetry-v1 PR #1",
+    "run": 1,
+    "effort": "high",
+    "verdict": "approve",
+    "status": "ok",
+    "categories": [],
+    "rounding": false,
+    "defaults": false,
+    "usd": 0.03492475,
+    "output_tokens": 7710,
+    "latency_s": 49.9,
+    "findings": []
+  },
+  {
+    "task": "20261030-031042-391b51",
+    "pr": "fleet-telemetry-v1 PR #1",
+    "run": 2,
+    "effort": "high",
+    "verdict": "approve",
+    "status": "ok",
+    "categories": [],
+    "rounding": false,
+    "defaults": false,
+    "usd": 0.0316055,
+    "output_tokens": 6929,
+    "latency_s": 44.6,
+    "findings": []
+  },
+  {
+    "task": "20261030-031042-391b51",
+    "pr": "fleet-telemetry-v1 PR #1",
+    "run": 3,
+    "effort": "high",
+    "verdict": "approve",
+    "status": "ok",
+    "categories": [],
+    "rounding": false,
+    "defaults": false,
+    "usd": 0.025222,
+    "output_tokens": 5427,
+    "latency_s": 37.2,
+    "findings": []
+  }
+]

@@ -134,16 +134,14 @@ Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md
     the whole 8,000-token budget reasoning and returned nothing, twice.
   - *v2* adds the unchanged tests that reach modified library code (from the blast-radius link graph), a 24,000-token
     budget with `finish_reason=length` reported as `reviewer_incomplete`, and a rule that code comments are the
-    agent's claims to be checked against the DriftSpec and changelog. **On DriftZero PR #1 it flagged the rounding on
-    the first try**: *medium · test_shaped_code*: "Rounds derived Euler angles to 1e-3 deg to make
-    `frame.pose.yaw == 87.0` exact in unchanged tests. DriftSpec and changelog ... never specify re-exposing Euler at
-    v1 wire resolution or rounding." It also flagged `covariance`/`health` defaults on both PRs (medium,
-    incomplete_migration) and the Euler-input path in `Pose` on fleet-telemetry-v1 (low, dead_compat_code).
-  - Caveats: one run per configuration, so this is an existence proof, not a rate. The v2 design (test context,
-    claims rule) was chosen after seeing v1 miss this case. The reviewer's `line_hint`s were off by 1–12 lines; inline
-    comments are now anchored on the quoted evidence instead, but the v2 reviews already posted on both PRs were placed
-    by the old rule (the rounding comment sits on `try:` instead of the `round(...)` line). Reasoning traces for every
-    run: [`docs/runs/*.review.jsonl`](docs/runs/).
+    agent's claims to be checked against the DriftSpec and changelog. Measured over a clean batch of 3 runs per PR
+    ([`docs/reviewer_eval.md`](docs/reviewer_eval.md)): it reported the rounding on DriftZero PR #1 in **3/3** runs
+    (2 as `test_shaped_code`, 1 as `precision_loss`; severity medium or low), and the required-fields-with-defaults
+    issue in **3/3** runs there but **0/3** on fleet-telemetry-v1 PR #1, where it approved with no findings every
+    time. Counting every v2 run so far: rounding 7/7, defaults 6/7 and 2/6.
+  - Caveats: 3 runs per cell, one model, one effort level, two diffs; no false-positive measurement. The v2 design
+    (test context, claims rule) was chosen after seeing v1 miss this case. The reviewer's own `line_hint`s are
+    unreliable (off by 1–12 lines), so inline comments are anchored by matching the quoted evidence to the diff.
 - **Rounding-style smells pass.** Twice Muse rounded the derived Euler angles to 3 decimals so a pre-existing exact
   check (`yaw == 87.0`) kept passing. Nothing here catches library code bent to fit a test: the guard only inspects
   test files, and the hold-outs use tolerances. It shows up only in human review of the diff. (When Muse instead
