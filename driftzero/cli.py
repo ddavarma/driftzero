@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import typer
@@ -42,6 +43,21 @@ def migrate(
     typer.echo(f"PR: {pr.url}" if pr.url else "PR: not created (--no-pr)")
     usd = "n/a" if res.cost.usd is None else f"${res.cost.usd:.4f}"
     typer.echo(f"{len(res.iterations)} iteration(s), {usd}, {res.wall_time_s:.0f}s end to end")
+
+
+@app.command("pr-body")
+def pr_body(
+    task: str = typer.Option(..., help="Task id of a finished run (.driftzero/runs/<id>.jsonl)."),
+    update: str = typer.Option(None, help="PR number or URL to update with gh pr edit."),
+) -> None:
+    """Regenerate a run's PR body from saved data (no model calls); optionally update the PR."""
+    from driftzero import pr as pr_mod
+
+    root = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                               check=True).stdout.strip())
+    body, path = pr_mod.regenerate(root, task, update)
+    typer.echo(body)
+    typer.echo(f"written to {path}" + (f"; PR {update} updated" if update else ""), err=True)
 
 
 @app.command()

@@ -51,6 +51,16 @@ class SuiteResult(BaseModel):
     def passed_count(self) -> int:
         return self.tests - self.failures - self.errors - self.skipped
 
+    def cases(self) -> list[tuple[str, str]]:
+        """(test name, "passed" | "failed" | "error" | "skipped") for every test case in the JUnit report."""
+        if not self.junit_xml:
+            return []
+        out = []
+        for case in ET.fromstring(self.junit_xml).iter("testcase"):
+            status = next((tag for tag in ("failure", "error", "skipped") if case.find(tag) is not None), None)
+            out.append((case.get("name") or "?", {"failure": "failed", None: "passed"}.get(status, status)))
+        return out
+
     def failures_redacted(self) -> list[tuple[str, str]]:
         """(test name, one-line message) per failing test: no paths, line numbers, module names or bodies."""
         if not self.junit_xml:

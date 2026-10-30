@@ -24,6 +24,7 @@ from __future__ import annotations
 import ast
 import configparser
 import difflib
+import re
 import subprocess
 import sys
 import tomllib
@@ -234,6 +235,33 @@ def _literal_atoms(src: str) -> list[str]:
     return atoms
 
 
+def _mentions(token: str, src: str) -> bool:
+    return re.search(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", src, re.IGNORECASE) is not None
+
+
+def _path_segments(src: str) -> set[str]:
+    """Segments of path-like string literals ('/v1/fleet/telemetry' -> {'v1', 'fleet', 'telemetry'})."""
+    segs: set[str] = set()
+    for lit in _literal_atoms(src):
+        if "/" in lit:
+            segs |= {s.lower() for s in re.split(r"[/'\"\[\],\s{}]+", lit) if s}
+    return segs
+
+
+def _stale_name_tokens(qual: str, old_body: str, new_body: str) -> list[str]:
+    """Version (v1, v2) or endpoint-path tokens in a test's name that its body mentioned before and no longer does."""
+    tokens = [t for t in qual.split(".")[-1].split("_")[1:] if t]
+    segments = _path_segments(old_body) if old_body.strip() else set()
+    stale = []
+    for tok in tokens:
+        versionish = re.fullmatch(r"v\d+", tok, re.IGNORECASE) is not None
+        if not (versionish or tok.lower() in segments):
+            continue
+        if _mentions(tok, old_body) and not _mentions(tok, new_body):
+            stale.append(tok)
+    return stale
+
+
 def _body_lines(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
     body = fn.body
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
@@ -285,7 +313,9 @@ def _check_python(path: str, old: str | None, new: str | None, res: GuardResult)
     for qual, fn_new in new_fns.items():
         if qual not in old_fns:
             if is_test_module and _is_test(qual):
-                res.review_items.append(Finding("added_test", path, f"new test ({_plural(_assert_count(fn_new), 'assert')})", test=qual))
+                n = _assert_count(fn_new)
+                res.review_items.append(Finding("added_test", path, f"new test ({_plural(n, 'assert')})", test=qual,
+                                                new=str(n)))
             continue
         _diff_function(path, qual, old_fns[qual], fn_new, res)
 
@@ -316,6 +346,11 @@ def _diff_function(path: str, qual: str, fn_old, fn_new, res: GuardResult) -> No
                 res.review_items.append(Finding("loosened", path, "comparison loosened (approx/tolerance added)",
                                                 test=qual, old="\n".join(olds), new="\n".join(news)))
     kind = "test" if _is_test(qual) else "helper/fixture"
+    if _is_test(qual):
+        for tok in _stale_name_tokens(qual, "\n".join(a), "\n".join(b)):
+            res.review_items.append(Finding(
+                "stale_test_name", path, f"test name mentions '{tok}' but its body no longer does; rename it in a "
+                f"follow-up (the guard rejects renames during a repair)", test=qual, old=tok))
     for o, n in literal_pairs:
         res.review_items.append(Finding("literal_change", path, f"literal changed in {kind} {qual}", test=qual, old=o, new=n))
     if other:

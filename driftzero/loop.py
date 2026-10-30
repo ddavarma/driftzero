@@ -49,6 +49,7 @@ class LoopResult:
     guard: GuardResult | None = None
     verify: verify_mod.VerifyResult | None = None
     hidden_holdout_files: list[str] = field(default_factory=list)
+    ended_at: float | None = None  # unix time the loop finished (the PR step's clock starts here)
 
 
 def _head(text: str, n: int = FAILURE_HEAD_LINES) -> str:
@@ -94,6 +95,7 @@ def repair_until_verified(
     on_line: Callable[[str], None] = lambda s: print(s, flush=True),
 ) -> LoopResult:
     t0 = time.monotonic()
+    spec_path = None if isinstance(spec, DriftSpec) else str(Path(spec).resolve())
     spec = spec if isinstance(spec, DriftSpec) else DriftSpec.load(spec)
     repo = Path(repo).resolve()
     br = analyze(repo, spec)
@@ -110,7 +112,7 @@ def repair_until_verified(
         with log_path.open("a") as fh:
             fh.write(json.dumps({"ts": time.time(), "event": event, "task_id": task_id, **data}, default=str) + "\n")
 
-    log("start", repo=str(repo), branch=wt.branch, base=wt.base, worktree=str(wt.path), dry_run=dry_run,
+    log("start", repo=str(repo), spec_path=spec_path, branch=wt.branch, base=wt.base, worktree=str(wt.path), dry_run=dry_run,
         local=local, model=model, contributor=contributor, max_iterations=max_iterations,
         holdout=str(holdout) if holdout else None, hidden_from_agent=len(hidden),
         impacted_symbols=len(br.symbols), impacted_tests=len(br.tests))
@@ -188,7 +190,7 @@ def repair_until_verified(
             f"${total.usd or 0:.4f}, {wall:.0f}s; log {log_path}")
     return LoopResult(task_id=task_id, worktree=wt, spec=spec, blast_radius=br, passed=passed, iterations=iterations,
                       log_path=log_path, cost=total, wall_time_s=wall, model=model, steps=steps, answer=answer,
-                      guard=guard, verify=vres, hidden_holdout_files=hidden)
+                      guard=guard, verify=vres, hidden_holdout_files=hidden, ended_at=time.time())
 
 
 if __name__ == "__main__":

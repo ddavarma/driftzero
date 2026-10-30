@@ -166,6 +166,28 @@ def test_review_added_test_and_structural_edit():
     assert set(rules(res.review_items)) == {"modified_test", "added_test"}
 
 
+def test_review_stale_test_name_version_token():
+    old = "def test_client_hits_v1_paths(client):\n    assert client.calls == ['/v1/robots/a/latest']\n"
+    res = run(old.replace("/v1/", "/v2/"), old=old)
+    assert res.ok
+    stale = [f for f in res.review_items if f.rule == "stale_test_name"]
+    assert [(f.test, f.old) for f in stale] == [("test_client_hits_v1_paths", "v1")]
+
+
+def test_review_stale_test_name_endpoint_token():
+    old = "def test_fetch_latest():\n    assert get('/v1/robots/a/latest') == 1\n"
+    res = run(old.replace("/v1/robots/a/latest", "/v2/robots/a/current"), old=old)
+    assert [(f.rule, f.old) for f in res.review_items if f.rule == "stale_test_name"] == [("stale_test_name", "latest")]
+
+
+def test_no_stale_name_when_token_still_present_or_never_a_path():
+    old = "def test_latest_v1():\n    assert get('/v1/latest') == 1\n"
+    assert not [f for f in run(old.replace("== 1", "== 2"), old=old).review_items if f.rule == "stale_test_name"]
+    old = "def test_alert_kinds():\n    assert kinds() == {'alert'}\n"  # 'alert' is not a path/version token
+    assert not [f for f in run(old.replace("{'alert'}", "{'x'}"), old=old).review_items
+                if f.rule == "stale_test_name"]
+
+
 def test_non_test_code_is_ignored_and_unchanged_tests_produce_nothing():
     assert check_changes([FileChange("proj/lib.py", "x = 1\n", "x = 2\n")]).review_items == []
     assert run(BASE).review_items == [] and run(BASE).ok
