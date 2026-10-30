@@ -69,6 +69,7 @@ Every `task.lifecycle.*` payload has `event: {kind, task_id, ...}`:
 | `task.lifecycle.completed` | | |
 | `task.lifecycle.failed` | `reason` | seen with echo: reminder tasks fail with `"invalid run configuration: provider does not support base instructions"` |
 | `task.lifecycle.rejected` | | known from earlier runs; not in these captures |
+| `task.lifecycle.tool_output_ref` | `output_ref: {id, kind: "tool_patch", uri: "tool-output://local/…", media_type, byte_len, digest}` | file-editing tools; points at Muse's local copy of the patch |
 
 `task_kind` values seen:
 
@@ -77,6 +78,8 @@ Every `task.lifecycle.*` payload has `event: {kind, task_id, ...}`:
 | `model.meta.response` | one model step (one Responses-API call). **DriftZero's step counter counts these.** |
 | `model.unknown.response` | the echo provider's model step |
 | `tool.bash` | shell command |
+| `tool.read_file`, `tool.write_file`, `tool.edit_file` | file tools (repair run). `tool.result.text` is plain text, not JSON: `edit_file` returns `edited\nchanged lines: …` plus a unified diff |
+| `tool.write_todos` | the agent's plan; mirrored by `todo.snapshot.updated` |
 | `reminder.agent.skill-reminder`, `reminder.agent.goal-reminder`, `reminder.agent.verify-reminder` | background reminder agents. `--disable-reminders` suppresses them with meta; echo still spawns them |
 
 ## Tool results
@@ -99,6 +102,20 @@ Every `task.lifecycle.*` payload has `event: {kind, task_id, ...}`:
 
 The command only becomes visible at result time: `task.lifecycle.proposed` for a `tool.bash` task carries no command. The live trace therefore prints one line per `tool.result`.
 `outcome` is `success` / `tool_error` / … (strings in the binary: `success`, `tool_error`, `failure_kind`).
+
+## Other events seen in the repair run
+
+| payload_type | payload |
+|---|---|
+| `todo.snapshot.updated` | `facts: {revision, source_tool: "write_todos", items: [{text, status: "in_progress" \| "pending" \| "completed"}]}`. Good for a live checklist in the v1 terminal UI |
+
+The full repair run ([`runs/20261030-014828-02a484.jsonl`](runs/20261030-014828-02a484.jsonl)) used these payload types:
+`run.lifecycle.started`, `run.model.configured`, `run.output.delta`, `run.terminal.completed`, `run.usage`,
+`runtime.command.accepted`, `session.run.linked`, `session.workspace_branch.observed`, `task.lifecycle.{proposed,accepted,scheduled,side_effect_intent,started,status,output,tool_output_ref,completed}`,
+`task.stream.linked`, `todo.snapshot.updated`, `tool.result`, `turn.input.user`. Again, there was no `run.lifecycle.completed`.
+
+**Caveat for verification:** `exit_code` is the exit code of the whole shell pipeline. Muse ran `python -m pytest -q 2>&1 | tail -n 30`,
+which exits 0 whether or not tests pass, so a `pytest` command with exit 0 in the trace is not proof of green. Stage 5's independent run is.
 
 ## Typical order (smoke run)
 
