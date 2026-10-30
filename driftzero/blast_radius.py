@@ -34,6 +34,11 @@ from driftzero.spec import DriftSpec
 SKIP_DIRS = {".git", ".venv", "venv", "__pycache__", ".driftzero", "build", "dist",
              "node_modules", ".pytest_cache", ".mypy_cache", ".tox"}
 DATA_DIRS = {"tests", "test", "fixtures", "testdata"}
+HOLDOUT_PREFIX = "holdout"  # hold-out contract tests (e.g. holdout_v2/) are never analyzed or shown to the agent
+
+
+def _skipped(parts: tuple[str, ...]) -> bool:
+    return any(p in SKIP_DIRS or p.endswith(".egg-info") or p.startswith(HOLDOUT_PREFIX) for p in parts)
 GETTERS = {"get", "pop", "setdefault"}
 PROPAGATING = {"call", "ref", "fixture", "data", "member"}
 MATCH_EDGE = {"endpoint": "endpoint", "literal": "literal"}  # every other match kind -> "field_access"
@@ -166,7 +171,7 @@ class _Module:
 def _discover(repo: Path) -> Iterator[Path]:
     for p in sorted(repo.rglob("*.py")):
         parts = p.relative_to(repo).parts
-        if any(part in SKIP_DIRS or part.endswith(".egg-info") for part in parts):
+        if _skipped(parts[:-1]):
             continue
         yield p
 
@@ -355,7 +360,7 @@ def _scan_data(repo: Path, probes: _Probes) -> dict[str, list[str]]:
     hits: dict[str, list[str]] = {}
     for p in sorted(repo.rglob("*.json")):
         parts = p.relative_to(repo).parts
-        if any(x in SKIP_DIRS for x in parts) or not DATA_DIRS & set(parts[:-1]):
+        if _skipped(parts[:-1]) or not DATA_DIRS & set(parts[:-1]):
             continue
         try:
             doc = json.loads(p.read_text())
