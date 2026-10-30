@@ -1,0 +1,89 @@
+{
+  "api": "Fleet Telemetry API",
+  "from_version": "v1",
+  "to_version": "v2",
+  "summary": "Base path /v1 -> /v2. Orientation moves from Euler degrees (roll, pitch, yaw; intrinsic Z-Y-X) to a unit quaternion (qx, qy, qz, qw; Hamilton, scalar-last, sign not canonicalised). Scalar position noise is replaced by a 6x6 pose covariance. New required health score (0..1, alert below 0.5).",
+  "endpoints_renamed": [
+    {
+      "method": "GET",
+      "old": "/v1/robots/{robot_id}/telemetry/latest",
+      "new": "/v2/robots/{robot_id}/telemetry/latest",
+      "notes": ""
+    },
+    {
+      "method": "GET",
+      "old": "/v1/fleet/telemetry",
+      "new": "/v2/fleet/telemetry",
+      "notes": ""
+    }
+  ],
+  "fields_removed": [
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.roll",
+      "old_type": "number (degrees)",
+      "replacement": "orientation.{qx,qy,qz,qw}",
+      "notes": "Rotation is now carried by the quaternion; R = Rz(yaw)·Ry(pitch)·Rx(roll) is unchanged."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.pitch",
+      "old_type": "number (degrees)",
+      "replacement": "orientation.{qx,qy,qz,qw}",
+      "notes": ""
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation.yaw",
+      "old_type": "number (degrees, unnormalised)",
+      "replacement": "orientation.{qx,qy,qz,qw}",
+      "notes": "Heading: yaw = atan2(2(qw·qz + qx·qy), 1 - 2(qy² + qz²))."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "noise",
+      "old_type": "number (isotropic 1-sigma position uncertainty, metres)",
+      "replacement": "covariance",
+      "notes": "Weight by the inverse of the position block covariance[0:3][0:3]. Scalar equivalent: sqrt(trace(P_pos) / 3)."
+    }
+  ],
+  "fields_added": [
+    {"schema_name": "TelemetryFrame", "path": "orientation.qx", "type": "number", "required": true, "notes": ""},
+    {"schema_name": "TelemetryFrame", "path": "orientation.qy", "type": "number", "required": true, "notes": ""},
+    {"schema_name": "TelemetryFrame", "path": "orientation.qz", "type": "number", "required": true, "notes": ""},
+    {"schema_name": "TelemetryFrame", "path": "orientation.qw", "type": "number", "required": true, "notes": "May be negative; q and -q are the same rotation."},
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "covariance",
+      "type": "array[6][6] of number",
+      "required": true,
+      "notes": "Symmetric, row-major. Order x, y, z (m), rot X, Y, Z (rad). Position block in m²."
+    },
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "health",
+      "type": "number (0..1)",
+      "required": true,
+      "notes": "1 = nominal; below 0.5 the robot should be serviced. Dashboards should raise a health alert."
+    }
+  ],
+  "fields_renamed": [],
+  "type_changes": [
+    {
+      "schema_name": "TelemetryFrame",
+      "path": "orientation",
+      "old_type": "EulerOrientation {roll, pitch, yaw} in degrees",
+      "new_type": "Quaternion {qx, qy, qz, qw}",
+      "notes": ""
+    }
+  ],
+  "value_changes": [
+    {
+      "schema_name": "FleetSnapshot",
+      "path": "api_version",
+      "old": "v1",
+      "new": "v2",
+      "notes": ""
+    }
+  ]
+}
