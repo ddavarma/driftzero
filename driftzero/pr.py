@@ -164,11 +164,13 @@ def _findings(res: LoopResult) -> list[str]:
     if rv is not None and rv.result is not None:
         for f in rv.confident:
             where = f.file + (f":{f.line_hint}" if f.line_hint else "")
-            rows.append(f"| {REVIEWER_LABEL}{pass_label} | {f.severity}{conf_txt(f)} | {f.category} | {_code(where)} | "
+            kind = f.category + (" · policy-required" if f.policy_required else "")
+            rows.append(f"| {REVIEWER_LABEL}{pass_label} | {f.severity}{conf_txt(f)} | {kind} | {_code(where)} | "
                         f"{_md(f.explanation)} *Fix:* {_md(f.suggested_fix)} |")
         for f in rv.low_confidence:
             where = f.file + (f":{f.line_hint}" if f.line_hint else "")
-            low_rows.append(f"| {f.conf:.2f} | {f.severity} | {f.category} | {_code(where)} | {_md(f.explanation)} |")
+            kind = f.category + (" · policy-required" if f.policy_required else "")
+            low_rows.append(f"| {f.conf:.2f} | {f.severity} | {kind} | {_code(where)} | {_md(f.explanation)} |")
     out = ["| source | severity (confidence) | kind | where | finding |", "|---|---|---|---|---|", *rows] if rows else []
     if low_rows:
         out += ["", f"**Possible issues (low confidence).** The reviewer must report every candidate it considered; "
@@ -187,6 +189,10 @@ def _findings(res: LoopResult) -> list[str]:
                 f"${rv.cost.usd or 0:.4f}, {rv.latency_s:.0f} s. It is told what the guard checks and reviews what "
                 "the guard cannot see (test-shaped library code, precision, unrequested behaviour changes, "
                 "compatibility paths)."]
+    if any(f.policy_required for f in (rv.result.findings if rv is not None and rv.result else [])):
+        out += ["", "*policy-required*: a deterministic filter tags findings about compatibility code the repair rules "
+                "require (category `dead_compat_code`, or evidence that only declares a removed v1 field kept as a "
+                "derived value). They are shown for review but never trigger `--review-fix`."]
     if not out:
         return ["No findings: the guard saw no stale names, loosened comparisons or restructured tests, and no "
                 "model review ran."]
@@ -488,6 +494,10 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
     from driftzero.reviewer import latest_logged
 
     res.review = latest_logged([runs / f"{task_id}.jsonl", runs / f"{task_id}.review.jsonl"])
+    if res.review is not None and res.review.result is not None:
+        from driftzero.reviewer import policy_filter
+
+        policy_filter(res.review.result.findings, res.spec)
     res.review_fix = next((e for e in reversed(events) if e["event"] == "review_fix"), None)
     res.settings = {k: start.get(k) for k in ("holdout", "local", "dry_run", "contributor", "model")}
     if res.review is not None and res.review.cost.usd is not None:
@@ -552,7 +562,7 @@ def review_pr(res: LoopResult, pr_url: str, *, provider: str = "baseten", effort
         outcome = reviewer.review(diff, [str(f) for f in (res.guard.review_items if res.guard else [])], res.spec,
                                   changelog, provider=provider, effort=effort or reviewer.DEFAULT_EFFORT,
                                   log_path=log_path or res.log_path, task_id=res.task_id,
-                                  test_context=reviewer.test_context_for(res, diff), policy=reviewer.policy_for(res))
+                                  test_context=reviewer.test_context_for(res, diff))
     res.review = outcome
     slug = res.target_slug or reviewer.repo_slug(wt.root)
     number = pr_url.rstrip("/").rsplit("/", 1)[-1]
@@ -580,7 +590,8 @@ def fix_candidates(outcome, min_confidence: float = DEFAULT_FIX_CONFIDENCE) -> l
     """Findings that trigger --review-fix: severity medium/high and confidence >= min_confidence."""
     if outcome is None or outcome.result is None:
         return []
-    return [f for f in outcome.result.findings if f.severity in ("medium", "high") and f.conf >= min_confidence]
+    return [f for f in outcome.result.findings
+            if f.severity in ("medium", "high") and f.conf >= min_confidence and not f.policy_required]
 
 
 def apply_review_fix(res: LoopResult, pr_url: str, first, *, provider: str = "baseten", strict: bool = False,

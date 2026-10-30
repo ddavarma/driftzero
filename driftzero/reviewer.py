@@ -48,6 +48,7 @@ class Finding(BaseModel):
     explanation: str
     suggested_fix: str
     confidence: float | None = None  # v2.1: 0.0-1.0 that this is a real problem; None (v1/v2 logs) counts as 1.0
+    policy_required: bool = False  # set by policy_filter(), never by the model
 
     @property
     def conf(self) -> float:
@@ -55,6 +56,31 @@ class Finding(BaseModel):
 
 
 CONFIDENT = 0.5  # findings at or above this are "Review findings"; below are "Possible issues (low confidence)"
+
+
+def policy_filter(findings: list[Finding], spec: DriftSpec) -> list[Finding]:
+    """Deterministic post-filter: tag findings about code the repair hard rules require.
+
+    Hard rule 2 (repair.hard_rules) asks Muse to keep the public Python API source-compatible, with the removed v1
+    fields kept as derived values. A finding is tagged `policy_required` when
+      - its category is dead_compat_code (compatibility code is what the rule asks for), or
+      - every added line it quotes is a plain field declaration of a removed v1 field, e.g. `roll: float = 0.0`
+        (names from the DriftSpec's fields_removed / fields_renamed; computations such as `roll=round(...)` are not
+        declarations and stay untagged).
+    Tagged findings are still shown, with the tag, but never trigger --review-fix. Returns the tagged findings.
+    """
+    names = {f.path.rsplit(".", 1)[-1] for f in spec.fields_removed} | \
+            {f.old_path.rsplit(".", 1)[-1] for f in spec.fields_renamed}
+    decl = re.compile(r"^\s*(?:" + "|".join(map(re.escape, sorted(names))) + r")\s*:\s*[^=#]+?"
+                      r"(?:=\s*[-+\w.]+\s*)?(?:#.*)?$") if names else None
+    tagged = []
+    for f in findings:
+        added = [ln.strip()[1:] for ln in f.evidence.splitlines() if ln.strip().startswith("+")]
+        declared = bool(decl and added and all(decl.match(a) for a in added))
+        f.policy_required = f.category == "dead_compat_code" or declared
+        if f.policy_required:
+            tagged.append(f)
+    return tagged
 
 
 class ReviewResult(BaseModel):
@@ -107,11 +133,6 @@ Epistemics: code comments, docstrings and commit-style explanations in the diff 
 facts. Check every justification they give against the DriftSpec and the changelog. If the code relies on a
 justification that neither document supports, that unsupported justification is itself a finding.
 
-You also get the AGREED MIGRATION POLICY: the hard rules the repair agent was given. Do not report code that this
-policy requires (for example a source-compatible Python API kept on purpose). Do report code that violates the policy,
-and problems the policy does not cover. This policy governs which interfaces exist, not how values are computed;
-numeric fidelity to the DriftSpec and changelog formulas is always in scope.
-
 You also get the unchanged tests that exercise the modified library functions. They are not part of the diff, but
 they show which expectations the new library code has to meet; use them to judge whether library code is shaped by
 a test rather than by the specification.
@@ -131,8 +152,7 @@ def build_user_prompt(diff: str, guard_items: list[str], spec: DriftSpec, change
     return "\n".join([
         "## DriftSpec (the intended change)", "```json", spec.model_dump_json(indent=1), "```", "",
         "## Upstream changelog", changelog.strip() if changelog else "(not provided)", "",
-        "## Agreed migration policy (the repair agent's hard rules)",
-        *(policy or ["(not provided)"]), "",
+        *(["## Agreed migration policy (the repair agent's hard rules)", *policy, ""] if policy else []),
         "## Already reported by the static guard (do not repeat)",
         *(f"- {g}" for g in guard_items), *([] if guard_items else ["(nothing)"]), "",
         "## Diff under review (library and tests)", "```diff", diff, "```", "",
@@ -158,7 +178,7 @@ class ReviewOutcome:
     finish_reasons: list[str] = field(default_factory=list)
     test_context: list[str] = field(default_factory=list)  # names of the unchanged tests included
     policy_given: bool = False
-    version: str = "2.3"  # frozen after the v2.3 eval (docs/reviewer_eval.md)
+    version: str = "2.1"  # shipped and frozen: v2.1 prompt + deterministic policy post-filter (docs/reviewer_eval.md)
 
     @property
     def confident(self) -> list[Finding]:
@@ -227,12 +247,14 @@ def review(diff: str, guard_items: list[str], spec: DriftSpec, changelog: str | 
             out.status = "incomplete"
             try:
                 out.result = ReviewResult.model_validate_json(_strip_fences(content))
+                policy_filter(out.result.findings, spec)
             except (ValidationError, ValueError):
                 out.result = None
             out.error = f"attempt {attempt}: finish_reason=length after {u.completion_tokens} tokens (max {MAX_TOKENS})"
             break
         try:
             out.result = ReviewResult.model_validate_json(_strip_fences(content))
+            policy_filter(out.result.findings, spec)
             out.error = None
             out.status = "ok"
             break
@@ -420,6 +442,7 @@ def _finding_md(f: Finding, with_location: bool = True) -> str:
     where = f"`{f.file}`" + (f" (line {f.line_hint})" if f.line_hint else "") if with_location else ""
     ev = "\n".join("    " + ln for ln in f.evidence.splitlines())
     conf = "" if f.confidence is None else f" · confidence {f.conf:.2f}" + (" (low)" if f.conf < CONFIDENT else "")
+    conf += " · policy-required (does not trigger a fix)" if f.policy_required else ""
     return (f"**{f.severity} · {f.category}{conf}** {where}\n\n{f.explanation}\n\n{ev}\n\n"
             f"Suggested fix: {f.suggested_fix}")
 
@@ -549,7 +572,7 @@ if __name__ == "__main__":
     ctx = test_context_for(res, d)
     print(f"test context: {len(ctx[1])} tests, {ctx[0].count(chr(10)) + 1} lines: {ctx[1]}", file=sys.stderr)
     o = review(d, g, res.spec, cl, provider=prov, effort=eff, log_path=home / ".driftzero" / "runs" / f"{tid}.review.jsonl",
-               task_id=tid, test_context=ctx, policy=policy_for(res))
+               task_id=tid, test_context=ctx)
     print(json.dumps({"verdict": o.verdict_label, "status": o.status, "finish_reasons": o.finish_reasons,
                       "error": o.error, "attempts": o.attempts,
                       "latency_s": o.latency_s, "cost": o.cost.as_dict(),

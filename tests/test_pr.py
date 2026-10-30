@@ -278,3 +278,15 @@ def test_v21_fix_trigger_threshold(verified, monkeypatch):
     assert info["min_confidence"] == 0.3 and [f["confidence"] for f in info["findings"]] == [0.45]
     section = pr.render_body(res).split("## Reviewer-driven fixes")[1].split("## API change")[0]
     assert "confidence >= **0.3** (lowered from the default 0.6 by a manual `driftzero review-fix` run" in section
+
+
+def test_policy_required_tag_in_pr_tables(verified):
+    res, _ = verified
+    dead = FINDING.model_copy(update={"category": "dead_compat_code", "confidence": 0.9, "policy_required": True})
+    low = FINDING.model_copy(update={"category": "dead_compat_code", "confidence": 0.3, "policy_required": True})
+    res.review = _outcome([dead, low])
+    findings = pr.render_body(res).split("## Review findings")[1].split("## API change")[0]
+    assert "| dead_compat_code · policy-required |" in findings
+    assert "| 0.30 | medium | dead_compat_code · policy-required |" in findings
+    assert "*policy-required*: a deterministic filter tags findings" in findings
+    assert pr.fix_candidates(res.review) == []

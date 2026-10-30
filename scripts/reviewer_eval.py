@@ -51,7 +51,7 @@ def detect(findings: list[dict]) -> dict:
 def one(task: str, run: int, effort: str, inputs: dict) -> dict:
     res, diff, guard_items, changelog, ctx = inputs[task]
     out = reviewer.review(diff, guard_items, res.spec, changelog, effort=effort, test_context=ctx,
-                          policy=reviewer.policy_for(res),
+                          policy=reviewer.policy_for(res) if WITH_POLICY else None,
                           log_path=OUT / f"{task}.eval.jsonl", task_id=task)
     findings = [f.model_dump() for f in (out.result.findings if out.result else [])]
     return {"task": task, "pr": TASKS[task], "run": run, "effort": effort, "verdict": out.verdict_label,
@@ -64,6 +64,7 @@ def one(task: str, run: int, effort: str, inputs: dict) -> dict:
 if __name__ == "__main__":
     runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 3
     effort = sys.argv[sys.argv.index("--effort") + 1] if "--effort" in sys.argv else "high"
+    WITH_POLICY = "--policy" in sys.argv  # v2.2/v2.3 configuration; the shipped reviewer (v2.1) gets no policy
     if "--out" in sys.argv:
         OUT = ROOT / sys.argv[sys.argv.index("--out") + 1]
     only = sys.argv[sys.argv.index("--tasks") + 1].split(",") if "--tasks" in sys.argv else list(TASKS)

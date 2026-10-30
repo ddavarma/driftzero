@@ -185,24 +185,53 @@ def test_v21_prompt_requires_confidence_and_forbids_suppression():
     assert "round" not in reviewer.SYSTEM.lower()
 
 
-def test_v22_policy_section_and_no_rounding_in_policy():
-    import re
+def _f(category="test_shaped_code", evidence="+        x = 1", severity="medium", confidence=0.8):
+    return reviewer.Finding(severity=severity, category=category, file="fleet_telemetry/models.py", line_hint="",
+                            evidence=evidence, explanation="e", suggested_fix="f", confidence=confidence)
 
-    from driftzero.repair import hard_rules
 
-    policy = hard_rules(SPEC, "benchmarks/robotics_telemetry_drift")
-    user = reviewer.build_user_prompt(DIFF, [], SPEC, None, None, policy)
-    assert "## Agreed migration policy (the repair agent's hard rules)" in user
-    assert policy[1].startswith("2. Test changes are limited") and policy[1] in user
-    assert "Do not report code that\npolicy requires" in reviewer.SYSTEM or "policy requires" in reviewer.SYSTEM
-    assert not re.search(r"\bround", " ".join(policy).lower())  # 'around' is fine; 'round'/'rounding' is not
+def test_shipped_prompt_is_v21_without_policy():
+    assert "AGREED MIGRATION POLICY" not in reviewer.SYSTEM
+    assert "Suppression is not allowed; low confidence is." in " ".join(reviewer.SYSTEM.split())
     assert "round" not in reviewer.SYSTEM.lower()
+    user = reviewer.build_user_prompt(DIFF, [], SPEC, None, None)
+    assert "Agreed migration policy" not in user
 
 
-def test_v23_policy_scope_sentence_and_frozen_version():
-    flat = " ".join(reviewer.SYSTEM.split())
-    assert ("This policy governs which interfaces exist, not how values are computed; numeric fidelity to the "
-            "DriftSpec and changelog formulas is always in scope.") in flat
-    assert "round" not in reviewer.SYSTEM.lower()
-    assert reviewer.ReviewOutcome(result=None, provider="baseten", model="m", effort="high", cost=reviewer.Cost(),
-                                  latency_s=0, attempts=0).version == "2.3"
+def test_policy_filter_tags_dead_compat_and_removed_field_declarations():
+    dead = _f(category="dead_compat_code", evidence="+    def legacy(self): ...")
+    decl = _f(category="incomplete_migration", evidence="+    roll: float = 0.0\n+    yaw: float = 0.0  # derived")
+    noise = _f(category="other", evidence="+    noise: float  # derived sigma")
+    tagged = reviewer.policy_filter([dead, decl, noise], SPEC)
+    assert tagged == [dead, decl, noise] and all(f.policy_required for f in tagged)
+
+
+def test_policy_filter_leaves_computations_new_fields_and_mixed_evidence():
+    rounding = _f(evidence="+            roll=round(eroll, 3),\n+            yaw=round(eyaw, 3),")
+    tuple_round = _f(evidence="+        roll, pitch, yaw = (round(v, 3) for v in to_euler(q))")
+    health = _f(category="incomplete_migration", evidence="+    health: float = 1.0  # 0..1")
+    mixed = _f(evidence="+    roll: float = 0.0\n+    health: float = 1.0")
+    removed_only = _f(evidence="-    roll: float")  # no added lines quoted
+    assert reviewer.policy_filter([rounding, tuple_round, health, mixed, removed_only], SPEC) == []
+    assert not any(f.policy_required for f in (rounding, tuple_round, health, mixed, removed_only))
+
+
+def test_policy_required_findings_never_trigger_review_fix():
+    from driftzero import pr
+
+    dead = _f(category="dead_compat_code", confidence=0.95, severity="high")
+    real = _f(category="test_shaped_code", confidence=0.7, evidence="+        roll=round(eroll, 3),")
+    reviewer.policy_filter([dead, real], SPEC)
+    out = reviewer.ReviewOutcome(result=reviewer.ReviewResult(verdict="request_changes", findings=[dead, real]),
+                                 provider="baseten", model="m", effort="high", cost=reviewer.Cost(), latency_s=0,
+                                 attempts=1)
+    assert pr.fix_candidates(out) == [real]
+    assert "policy-required (does not trigger a fix)" in reviewer._finding_md(dead)
+
+
+def test_review_applies_filter_to_model_output():
+    reply = {"verdict": "comment", "findings": [
+        {**GOOD["findings"][0], "category": "dead_compat_code", "confidence": 0.9},
+        {**GOOD["findings"][0], "confidence": 0.9}]}
+    out = reviewer.review(DIFF, [], SPEC, None, client=FakeChat([json.dumps(reply)]))
+    assert [f.policy_required for f in out.result.findings] == [True, False]
