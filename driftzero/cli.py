@@ -1,4 +1,4 @@
-"""DriftZero command line. `migrate` lands with stage 8."""
+"""DriftZero command line: `migrate` runs the whole pipeline; the other commands run one stage."""
 from __future__ import annotations
 
 import json
@@ -18,6 +18,30 @@ app = typer.Typer(no_args_is_help=True, add_completion=False)
 @app.callback()
 def main() -> None:
     """Autonomous API-drift repair agent."""
+
+
+@app.command()
+def migrate(
+    repo: Path = typer.Option(..., exists=True, file_okay=False, help="Repo (or project subdirectory of a repo) to migrate."),
+    spec: Path = typer.Option(..., exists=True, dir_okay=False, help="DriftSpec JSON."),
+    no_pr: bool = typer.Option(False, "--no-pr", help="Push the verified branch but don't open a PR."),
+    max_iterations: int = typer.Option(3, help="Repair/verify attempts before giving up."),
+    contributor: bool = typer.Option(False, "--contributor", help="Contributor mode (cheaper; Meta trains on it). Dev only."),
+    local: bool = typer.Option(False, "--local", help="Verify locally instead of in a Modal sandbox."),
+) -> None:
+    """Blast radius -> Muse repair -> guard -> sandbox verify (retrying) -> push + pull request."""
+    from driftzero import loop as loop_mod
+    from driftzero import pr as pr_mod
+
+    res = loop_mod.repair_until_verified(repo, spec, max_iterations, local=local, contributor=contributor)
+    if not res.passed:
+        typer.echo(f"not verified after {len(res.iterations)} iteration(s); worktree kept at {res.worktree.path}")
+        raise typer.Exit(1)
+    pr = pr_mod.open_pr(res, create=not no_pr)
+    typer.echo(f"pushed {pr.branch} @ {pr.commit[:10]}")
+    typer.echo(f"PR: {pr.url}" if pr.url else "PR: not created (--no-pr)")
+    usd = "n/a" if res.cost.usd is None else f"${res.cost.usd:.4f}"
+    typer.echo(f"{len(res.iterations)} iteration(s), {usd}, {res.wall_time_s:.0f}s end to end")
 
 
 @app.command()
