@@ -101,13 +101,21 @@ def migrate(
             info = pr_mod.apply_review_fix(res, pr.url, rv, provider=reviewer_provider, strict=strict,
                                            changelog=cl_text, min_confidence=review_fix_min_confidence)
             sr = info.get("second_review")
-            typer.echo(f"review fix: {'verified, pushed ' + info['commit'][:10] if info['verified'] else 'not verified, reverted'}"
-                       + (f"; second review: {sr['verdict']}, {sr['findings']} finding(s)" if sr else ""))
+            typer.echo(f"review fix: {_fix_status(info)}"
+                       + (f"; second review: {sr['verdict']}, {sr['findings']} confident finding(s)" if sr else ""))
             pr_mod.update_body(res, pr.url, pr_s=pr.pr_s, spec_path=str(spec))
         elif review_fix:
             typer.echo(f"review fix: no finding with severity >= medium and confidence >= {review_fix_min_confidence}")
     usd = "n/a" if res.cost.usd is None else f"${res.cost.usd:.4f}"
     typer.echo(f"{len(res.iterations)} iteration(s), {usd} total, {time.monotonic() - t_start:.0f}s wall end to end")
+
+
+def _fix_status(info: dict) -> str:
+    if info.get("commit"):
+        return f"verified, pushed {info['commit'][:10]}"
+    if info.get("no_change"):
+        return "verified, agent changed nothing (every finding justified); no second review"
+    return "not verified, reverted"
 
 
 @app.command("review-fix")
@@ -136,7 +144,7 @@ def review_fix_cmd(
     info = pr_mod.apply_review_fix(res, pr_ev["url"], res.review, provider=reviewer_provider, strict=strict,
                                    min_confidence=review_fix_min_confidence)
     sr = info.get("second_review")
-    typer.echo(f"review fix: {'verified, pushed ' + info['commit'][:10] if info.get('commit') else ('verified, no change' if info.get('no_change') else 'not verified, reverted')}"
+    typer.echo(f"review fix: {_fix_status(info)}"
                + (f"; second review: {sr['verdict']}, {sr['findings']} confident finding(s)" if sr else ""))
     pr_mod.update_body(res, pr_ev["url"], pr_s=pr_ev.get("pr_s"), spec_path=spec_path)
     typer.echo(f"PR body updated: {pr_ev['url']}")

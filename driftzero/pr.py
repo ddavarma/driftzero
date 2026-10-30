@@ -213,8 +213,8 @@ def _review_fix_section(res: LoopResult) -> list[str]:
     out = [f"The first review ({REVIEWER_LABEL}, verdict **{rf['first_verdict']}**) raised "
            f"{len(rf['findings'])} finding(s) that met the trigger.{thr_txt} DriftZero ran one extra repair iteration "
            f"(iteration {rf['iteration']}, the hard cap) with the findings verbatim, asking Muse to address each or "
-           "justify leaving it, under the same hard rules, then re-ran the guard, sandbox verification with "
-           "hold-outs, and a second review.", "",
+           "justify leaving it, under the same hard rules, then re-ran the guard and sandbox verification with "
+           "hold-outs, and (if code changed) a second review.", "",
            "| # | finding | agent's response | change |", "|---|---|---|---|"]
     for i, f in enumerate(rf["findings"], 1):
         r = responses.get(i)

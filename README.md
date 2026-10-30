@@ -92,6 +92,8 @@ driftzero pr-body --task <id> [--update <pr>]                         # re-rende
 ```
 
 `driftzero review --task <id> [--pr <url>] [--effort high|xhigh] [--reuse]` runs the reviewer on a finished run.
+`--review-fix` adds one reviewer-driven repair iteration when a finding has severity ≥ medium and confidence ≥
+`--review-fix-min-confidence` (default 0.6); `driftzero review-fix --task <id>` runs that pass on a finished run.
 `--strict` posts REQUEST_CHANGES when a finding is high severity (GitHub refuses that on your own PR; DriftZero then
 posts a COMMENT and says so). `--contributor` uses Meta's contributor tier (about 12x cheaper, but Meta trains on it; for development only).
 `--local` verifies in a temp copy instead of Modal. `--max-iterations N` caps the repair/verify loop.
@@ -113,6 +115,7 @@ only from the v2 spec and changelog. They are never shown to the agent, excluded
 
 | run | iterations | guard | agent suite | hold-out | sandbox | cost | wall time |
 |---|---|---|---|---|---|---|---|
+| [changelog → PR #3 on fleet-telemetry-v1, `--review-fix`, reviewer v2.1](https://github.com/ddavarma/fleet-telemetry-v1/pull/3) (`20261030-043600-9b46d7`) | 1 + 1 review-fix (no code change: all 4 findings justified) | ok, 15 review items | 23/23, re-verify 23/23 | 7/7, re-verify 7/7 | Modal, 4.7 s + 6.6 s | $0.84 (differ $0.019, review $0.065, fix pass $0.23) | 300 s end to end |
 | [changelog → PR #2 on fleet-telemetry-v1, `--review-fix`](https://github.com/ddavarma/fleet-telemetry-v1/pull/2) (`20261030-041743-ffdf04`) | 1 (+0: reviewer approved, no fix pass) | ok, 14 review items | 25/25 | 7/7 | Modal, 3.8 s | $0.67 (differ $0.026, review $0.068) | 260 s end to end |
 | [changelog → PR on fleet-telemetry-v1](https://github.com/ddavarma/fleet-telemetry-v1/pull/1) (`20261030-031042-391b51`) | 1 | ok; flagged `yaw == 87.0` loosened to `approx`, stale test name | 25/25 | 7/7 | Modal, 4.1 s | $0.59 (incl. $0.024 differ) | 175 s + 18 s differ |
 | [`driftzero migrate`, local spec](https://github.com/ddavarma/driftzero/pull/1) (`20261030-023010-e61999`, draft, evidence only) | 1 | ok, 0 rejections, 17 review items | 30/30 | 7/7 | Modal, 7.3 s | $0.37 (986K in, 91% cached, 28K out) | 142 s end to end |
@@ -143,6 +146,17 @@ Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md
     it:** fleet-telemetry-v1 PR #2 rounds the Euler angles again (with a more plausible "~6-decimal quaternions"
     comment); v2 drafted the finding in its reasoning, then approved citing the prompt's "report nothing you are unsure
     is real" rule, so `--review-fix` had nothing to act on.
+  - *v2.1* changes only the abstention policy: that rule is gone, every finding carries a `confidence`, suppression is
+    forbidden ("low confidence is" allowed), and the verdict is `approve` iff nothing reaches 0.5. Over 9 runs
+    ([`docs/reviewer_eval.md`](docs/reviewer_eval.md)) it reported the rounding **3/3** on both diffs that contain it
+    (at ≥ 0.6 confidence 3/3 and 2/3) and the defaults issue **3/3** on both diffs that contain it, with no false
+    defaults finding on the diff without them. **It is also noisier**: 5–8 findings per run instead of 0–3, severity
+    inflation (requested design choices called high), and on fleet-telemetry-v1 PR #1, hand-checked against the code,
+    14 non-defaults findings were 4 reports of 3 real unlabelled defects (health range not validated, a
+    quaternion-constructed `Pose` leaving its Euler fields at 0.0, a bare `ValueError` escaping the parser), 4
+    observations of requested design choices, 4 debatable, and 2 spurious (one accused a comment of an unsupported
+    claim that is actually in `openapi_v2.json`, which the reviewer is not given). v2 misses things; v2.1 finds them
+    and also invents some. Its confidence scores carry signal but are not calibrated.
   - Caveats: 3 runs per cell, one model, one effort level, two diffs; no false-positive measurement. The v2 design
     (test context, claims rule) was chosen after seeing v1 miss this case. The reviewer's own `line_hint`s are
     unreliable (off by 1–12 lines), so inline comments are anchored by matching the quoted evidence to the diff.
@@ -153,9 +167,11 @@ Logs: [`docs/runs/`](docs/runs/). Muse's event vocabulary: [`docs/muse_events.md
 - **Python only.** Blast radius, the guard and verification assume Python, `ast` and pytest. Impact analysis is
   static, with no type inference: method calls resolve by unique method name, and dynamic access (`getattr`,
   `**kwargs` payload plumbing) is invisible.
-- **`--review-fix` has not run live yet.** Its only live run got an `approve` from the reviewer, so no extra
-  iteration was triggered; the fix path (prompt, revert-on-failure, commit + second review, PR section) is covered by
-  offline tests only.
+- **The repair brief and the reviewer disagree on compatibility.** In the live `--review-fix` run (fleet-telemetry-v1
+  PR #3) the trigger fired on 4 findings (confidence 0.70–0.82), and Muse ran the extra iteration, re-verified (23/23,
+  7/7), and **changed nothing**: it justified all four by citing the repair prompt's own rule to keep the Python API
+  source-compatible, which is exactly what the reviewer flags as dead compat code. Nothing was pushed and no second
+  review ran. The commit-and-re-review half of the fix path is still covered only by offline tests.
 - **One scenario.** Everything is proven on one API change in one domain. The differ has only been checked against
   that one changelog; a second scenario (e.g. float dollars → integer cents) is not built yet.
 - **Hold-outs need a mapping.** A remote target gets hold-out tests only if `benchmarks/targets.json` lists it.
