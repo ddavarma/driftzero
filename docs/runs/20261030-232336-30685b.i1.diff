@@ -1,0 +1,85 @@
+diff --git a/requirements.txt b/requirements.txt
+index 571fa1b..fda0024 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -10,7 +10,7 @@ frozenlist==1.3.3
+ idna==3.4
+ iniconfig==2.0.0
+ multidict==6.0.4
+-openai==0.27.4
++openai<2,>=1
+ packaging==23.1
+ pluggy==1.0.0
+ pytest==7.3.1
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 1c93f2d..5d4a584 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -9,6 +9,13 @@ import tempfile
+ TEST_FILES_DIR = os.path.join(os.path.dirname(__file__), "test_files")
+ 
+ 
++@pytest.fixture(autouse=True)
++def dummy_openai_key(monkeypatch):
++    # v2 builds an explicit client that requires a key at construction;
++    # tests mock the resource methods so no network is touched.
++    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy-key")
++
++
+ @pytest.fixture(scope='function')
+ def temp_file():
+     # Create a temporary file
+diff --git a/tests/test_wolverine.py b/tests/test_wolverine.py
+index 24b35a8..c557631 100644
+--- a/tests/test_wolverine.py
++++ b/tests/test_wolverine.py
+@@ -58,7 +58,7 @@ def test_json_validated_response(mocker, chat_completion_response, nb_retry, fai
+         response = file.read()
+     # Mock the openAi chat completion API call
+     mocker.patch(
+-        "openai.ChatCompletion.create",
++        "openai.resources.chat.completions.Completions.create",
+         return_value=mock_open_ai_response_object(mocker=mocker, content=response))
+     # ChatCompletion returned an invalid response
+     if fail:
+diff --git a/wolverine/wolverine.py b/wolverine/wolverine.py
+index 6c75fad..916590c 100644
+--- a/wolverine/wolverine.py
++++ b/wolverine/wolverine.py
+@@ -13,7 +13,17 @@ from dotenv import load_dotenv
+ 
+ # Set up the OpenAI API
+ load_dotenv()
+-openai.api_key = os.getenv("OPENAI_API_KEY")
++
++
++def _get_client():
++    """
++    Build an explicit v2 client, reading the key from the environment.
++
++    Constructed lazily (never at import time) so importing wolverine keeps
++    working when OPENAI_API_KEY is unset; a missing key only fails when an
++    API call is actually attempted.
++    """
++    return openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+ 
+ # Default model is GPT-4
+ DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "gpt-4")
+@@ -56,7 +66,7 @@ def json_validated_response(
+     """
+     json_response = {}
+     if nb_retry != 0:
+-        response = openai.ChatCompletion.create(
++        response = _get_client().chat.completions.create(
+             model=model,
+             messages=messages,
+             temperature=0.5,
+@@ -195,7 +205,7 @@ def apply_changes(file_path: str, changes: List, confirm: bool = False):
+ 
+ 
+ def check_model_availability(model):
+-    available_models = [x["id"] for x in openai.Model.list()["data"]]
++    available_models = [m.id for m in _get_client().models.list().data]
+     if model not in available_models:
+         print(
+             f"Model {model} is not available. Perhaps try running with "

@@ -1,0 +1,1 @@
+{"ts": 1793417016.2709708, "event": "llm_call", "provider": "meta", "model": "muse-spark-1.3", "input_tokens": 3017, "output_tokens": 10189, "reasoning_tokens": 7694, "latency_s": 54.75, "response_id": "resp_6ae55f37df13fc0cc09440ea", "status": "completed", "cached_tokens": 0, "usd": 0.0470745}

@@ -185,6 +185,60 @@ telemetry ones had been sent to JobTracker too) moved into per-target config.
   fix pass. $0.40 total, 173 s end to end.
 - Logs: [`docs/runs/20261030-171945-fe1c00.*`](docs/runs/).
 
+## External test: wolverine (OpenAI SDK v0→v1)
+
+Second external target, same drift. Target: [biobootloader/wolverine](https://github.com/biobootloader/wolverine) (MIT,
+427 Python lines, last commit 2024-03-07, 6 pytest tests that pass offline on `openai==0.28.1` and on its own pin
+`0.27.4`), forked to [ddavarma/wolverine-driftzero-test](https://github.com/ddavarma/wolverine-driftzero-test). Same
+changelog as JobTracker, now shared at
+[`benchmarks/openai_v0_to_v1/CHANGELOG_openai_v1.md`](benchmarks/openai_v0_to_v1/CHANGELOG_openai_v1.md). 7 new
+respx hold-outs ([`benchmarks/wolverine_openai_v1/`](benchmarks/wolverine_openai_v1/)) fail 7/7 on the v0 code and
+pass 7/7 on an uncommitted hand-written migration, against `openai>=1,<2`. One per-target rule: importing
+`wolverine` must keep working without `OPENAI_API_KEY`. It took four runs; the first three never got to a verdict
+on the repo:
+
+- **Run 1 `20261030-231027-4c08a3`: Muse never started.** All 3 iterations exited in under a second with `session
+  worktree source proof filesystem operation failed`. Muse Code itself failed: the same error came back for a
+  JobTracker clone in the same layout for about two minutes, and then went away for both with nothing changed
+  (cause unknown). DriftZero spent 3 verify rounds on an unchanged worktree instead of stopping.
+- **Run 2 `20261030-231611-936398`: DriftZero crashed in the guard.** Muse finished (21 steps). wolverine's
+  `.gitignore` has no `__pycache__`, so the `.pyc` files from Muse's test runs entered the diff, and the guard
+  crashed decoding one (`UnicodeDecodeError`). **Fixed** (8d62bdb): caches are excluded from the diff and the PR
+  commit, and the guard tolerates binary files. The same commit fixes the retry prompt and PR table, which labelled
+  every install failure as "`pip install -e .`".
+- **Run 3: DriftZero crashed in the differ.** The model's DriftSpec JSON was cut off mid-object, which raised a raw
+  pydantic traceback. The cause is most likely the 16,000-token output cap, but that's unconfirmed because
+  `migrate` didn't log the differ call. **Fixed** (bea7f0a): invalid differ output is now a clear error, and the
+  call is logged. The cap is unchanged.
+- **Run 4 `20261030-232336-30685b`: verified in 1 iteration,
+  [PR #1 on the fork](https://github.com/ddavarma/wolverine-driftzero-test/pull/1).**
+  - Differ: $0.047, 57 entries, all from the changelog. Repair: 19 steps.
+  - Muse's changes: `requirements.txt` `openai==0.27.4` → `openai<2,>=1`; a lazy `_get_client()`, so importing
+    wolverine needs no key; `chat.completions.create`; `models.list().data` read with `.id`; the mock target updated
+    to `openai.resources.chat.completions.Completions.create`.
+  - Modal: agent suite 6/6, hold-outs 7/7. Reviewer: approve, 3 findings, all below 0.5 confidence; no fix pass.
+  - $0.39 total, 206 s.
+
+Where wolverine differed from JobTracker, reported and not patched:
+
+- **The blast radius found 0 symbols, 0 files, 0 tests in every run** (JobTracker: 11 symbols, 3 tests). The differ
+  files the SDK renames (`openai.ChatCompletion.create()` → `client.chat.completions.create()`) under
+  `endpoints_renamed`, and blast radius matches those only as URL templates. JobTracker's radius was seeded entirely
+  by the error-class entries: `openai.OpenAIError`, which is falsely listed as removed, and `InvalidRequestError`.
+  wolverine uses neither. Swapping the DriftSpecs between the two repos gives the same counts. So Muse got no impact
+  map, and the reviewer got no unchanged-test context. Its highest finding (0.45) worried about dict-subscripted
+  responses the code doesn't have.
+- **The guard let a test-infrastructure change through without listing it.** Muse added an autouse fixture to the
+  existing `tests/conftest.py` that sets a dummy `OPENAI_API_KEY`. The guard rejects *new* conftest files, but it
+  neither rejected this edit nor reported it for review. The only item it listed was the mock-target literal. The
+  hold-outs run with `--noconftest`, so they were unaffected.
+- **The differ's version labels varied.** JobTracker's run said `v0 → v1.0.0`; run 4 said `v1 → v2`, so the PR title
+  and commit message say "to openai v2" although the pin is `openai<2,>=1`. The PR body also describes the hold-outs
+  as "derived only from `openapi_v2.json`", which is fleet-benchmark wording.
+- Logs: [`docs/runs/20261030-231027-4c08a3.*`](docs/runs/), [`docs/runs/20261030-231611-936398.*`](docs/runs/),
+  [`docs/runs/wolverine-run3-20261030-232055.differ-crash.console.log`](docs/runs/),
+  [`docs/runs/20261030-232336-30685b.*`](docs/runs/).
+
 ## Limitations
 
 - **The open-weights reviewer needed the right inputs to catch the rounding.** Same model (Muse Spark Open on

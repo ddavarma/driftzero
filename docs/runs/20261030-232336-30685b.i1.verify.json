@@ -1,0 +1,134 @@
+{
+  "passed": true,
+  "backend": "modal",
+  "project_rel": ".",
+  "agent": {
+    "name": "agent",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--junitxml=/tmp/agent.xml",
+      "tests/"
+    ],
+    "exit_code": 0,
+    "stdout": "......                                                                   [100%]\n---------------------- generated xml file: /tmp/agent.xml ----------------------\n6 passed in 0.58s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"6\" time=\"0.584\" timestamp=\"2026-10-31T03:25:15.610816\" hostname=\"modal\"><testcase classname=\"tests.test_wolverine\" name=\"test_apply_changes_replace\" time=\"0.001\" /><testcase classname=\"tests.test_wolverine\" name=\"test_apply_changes_delete\" time=\"0.001\" /><testcase classname=\"tests.test_wolverine\" name=\"test_apply_changes_insert\" time=\"0.001\" /><testcase classname=\"tests.test_wolverine\" name=\"test_json_validated_response[/work/wt/tests/test_files/cc_resp.txt-3-False]\" time=\"0.260\" /><testcase classname=\"tests.test_wolverine\" name=\"test_json_validated_response[/work/wt/tests/test_files/cc_resp_fail.txt-3-True]\" time=\"0.002\" /><testcase classname=\"tests.test_wolverine\" name=\"test_json_validated_response[/work/wt/tests/test_files/cc_resp_fail.txt-10-True]\" time=\"0.004\" /></testsuite></testsuites>",
+    "tests": 6,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_s": 0.584
+  },
+  "holdout": {
+    "name": "holdout",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--noconftest",
+      "-c",
+      "/dev/null",
+      "--rootdir",
+      ".",
+      "--junitxml=/tmp/holdout.xml",
+      "holdout_v2/"
+    ],
+    "exit_code": 0,
+    "stdout": ".......                                                                  [100%]\n--------------------- generated xml file: /tmp/holdout.xml ---------------------\n7 passed in 0.52s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"7\" time=\"0.522\" timestamp=\"2026-10-31T03:25:16.641974\" hostname=\"modal\"><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_no_v0_resource_calls_remain\" time=\"0.002\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_json_response_through_v1_chat_completions\" time=\"0.490\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_invalid_json_is_retried_with_conversation_history\" time=\"0.003\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_retries_exhausted_raises\" time=\"0.003\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_send_error_to_gpt_builds_the_same_prompt\" time=\"0.004\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_model_available_through_v1_models_list\" time=\"0.002\" /><testcase classname=\"holdout_v2.test_contract_openai_v1\" name=\"test_unavailable_model_exits\" time=\"0.002\" /></testsuite></testsuites>",
+    "tests": 7,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_s": 0.522
+  },
+  "setup": {
+    "command": [
+      [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "--disable-pip-version-check",
+        "-r",
+        "requirements.txt",
+        "openai<2,>=1"
+      ],
+      [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "--disable-pip-version-check",
+        "pytest"
+      ],
+      [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "--disable-pip-version-check",
+        "respx>=0.21,<0.23"
+      ]
+    ],
+    "exit_code": 0,
+    "output": "",
+    "steps": [
+      {
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-q",
+          "--disable-pip-version-check",
+          "-r",
+          "requirements.txt",
+          "openai<2,>=1"
+        ],
+        "exit_code": 0,
+        "output": "  DEPRECATION: Building 'fire' using the legacy setup.py bdist_wheel mechanism, which will be removed in a future version. pip 25.3 will enforce this behaviour change. A possible replacement is to use the standardized build interface by setting the `--use-pep517` option, (possibly combined with `--no-build-isolation`), or adding a `pyproject.toml` file to the source tree of 'fire'. Discussion can be found at https://github.com/pypa/pip/issues/6334"
+      },
+      {
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-q",
+          "--disable-pip-version-check",
+          "pytest"
+        ],
+        "exit_code": 0,
+        "output": ""
+      },
+      {
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-q",
+          "--disable-pip-version-check",
+          "respx>=0.21,<0.23"
+        ],
+        "exit_code": 0,
+        "output": ""
+      }
+    ]
+  },
+  "wall_time_s": 9.9,
+  "sandbox_id": "sb-01M67ZTPRN17S8TTS5RAFM9SKJ"
+}
