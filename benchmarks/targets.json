@@ -37,5 +37,17 @@
       "**Negative `qw`**: `q` and `-q` are the same rotation and the server does not canonicalise sign. Never assume `qw >= 0`. Use sign-invariant formulas (rotation matrix from q, `atan2` heading), normalise q defensively, and add a test that a quaternion and its negation give the same heading, tilt and rotation. Robot `amr-03` in the fixture has `qw ≈ -0.99993` with heading 359°.",
       "Uncertainty: derive the scalar position sigma as `sqrt(trace(P_pos) / 3)` where `P_pos = covariance[0:3][0:3]`, so isotropic fixtures keep the same fusion weights and noise alerts as before. Validate the covariance shape (6x6)."
     ]
+  },
+  "ddavarma/wolverine-driftzero-test": {
+    "benchmark": "benchmarks/wolverine_openai_v1",
+    "holdout": "benchmarks/wolverine_openai_v1/holdout_v2",
+    "holdout_name": "holdout_v2",
+    "holdout_requirements": [
+      "respx>=0.21,<0.23"
+    ],
+    "validated_against": "openai>=1,<2",
+    "repair_rules": [
+      "Importing `wolverine` must keep working when `OPENAI_API_KEY` is unset (the test suite and `--revert` run without a key); do not construct anything at import time that requires the key."
+    ]
   }
 }

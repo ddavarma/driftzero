@@ -46,6 +46,9 @@ def test_target_config_by_slug_by_benchmark_path_and_fallback(tmp_path):
     jt = target.config_for(target.Target(path=tmp_path, slug="ddavarma/JobTracker-driftzero-test"), ROOT)
     assert jt.holdout == ROOT / "benchmarks/jobtracker_openai_v1/holdout_v2" and jt.holdout_name == "holdout_v2"
     assert jt.holdout_requirements and jt.validated_against == "openai>=1,<2" and jt.repair_rules == []
+    wv = target.config_for(target.Target(path=tmp_path, slug="ddavarma/wolverine-driftzero-test"), ROOT)
+    assert wv.holdout == ROOT / "benchmarks/wolverine_openai_v1/holdout_v2" and wv.holdout.is_dir()
+    assert wv.validated_against == "openai>=1,<2" and len(wv.repair_rules) == 1
     fleet = target.config_for(target.Target(path=FLEET.resolve()), ROOT)
     assert fleet.holdout == FLEET / "holdout_v2" and any("health alert" in r for r in fleet.repair_rules)
     other = write(tmp_path / "o", {"holdout_x/test_a.py": "def test_a(): pass\n"})

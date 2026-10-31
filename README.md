@@ -136,7 +136,7 @@ The first run on a repository we did not write. Target: [resumejob/JobTracker](h
 (MIT, 607 Python lines, 5 pytest tests that mock the v0 API and pass offline with `openai==0.28.1`), forked to
 [ddavarma/JobTracker-driftzero-test](https://github.com/ddavarma/JobTracker-driftzero-test). Drift input: the official
 v1.0.0 migration guide, quoted verbatim in
-[`benchmarks/jobtracker_openai_v1/CHANGELOG_openai_v1.md`](benchmarks/jobtracker_openai_v1/CHANGELOG_openai_v1.md); no
+[`benchmarks/openai_v0_to_v1/CHANGELOG_openai_v1.md`](benchmarks/openai_v0_to_v1/CHANGELOG_openai_v1.md); no
 OpenAPI documents exist. 7 hold-outs (respx-mocked v1 HTTP calls) failed 7/7 on the v0 code and passed 7/7 on a
 hand-written migration against `openai` 1.109.1.
 
