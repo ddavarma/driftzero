@@ -63,14 +63,19 @@ def migrate(
     diff_info = None
     if not spec:
         typer.echo("=== diff: changelog / OpenAPI -> DriftSpec")
-        res_d = differ.diff(changelog, openapi_v1, openapi_v2)
+        runs = target_mod.home_dir() / ".driftzero" / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime('%Y%m%d-%H%M%S')
+        try:
+            res_d = differ.diff(changelog, openapi_v1, openapi_v2, log_path=runs / f"diff-{stamp}.jsonl")
+        except providers.ProviderError as exc:
+            typer.echo(f"differ failed: {exc}", err=True)
+            raise typer.Exit(1)
         try:
             res_d.spec = differ.resolve_target_dependency(res_d.spec, target_dep)
         except ValueError as exc:
             raise typer.BadParameter(str(exc))
-        runs = target_mod.home_dir() / ".driftzero" / "runs"
-        runs.mkdir(parents=True, exist_ok=True)
-        spec = runs / f"diff-{time.strftime('%Y%m%d-%H%M%S')}.driftspec.json"
+        spec = runs / f"diff-{stamp}.driftspec.json"
         res_d.spec.dump(spec)
         td = res_d.spec.target_dependency
         typer.echo(f"target dependency: {td.requirement} (from the {td.source})" if td else "target dependency: none")

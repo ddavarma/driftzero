@@ -1,0 +1,46 @@
+=== diff: changelog / OpenAPI -> DriftSpec
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/adityavarma/Downloads/driftzero/driftzero/cli.py:66 in migrate        │
+│                                                                              │
+│    63 │   diff_info = None                                                   │
+│    64 │   if not spec:                                                       │
+│    65 │   │   typer.echo("=== diff: changelog / OpenAPI -> DriftSpec")       │
+│ ❱  66 │   │   res_d = differ.diff(changelog, openapi_v1, openapi_v2)         │
+│    67 │   │   try:                                                           │
+│    68 │   │   │   res_d.spec = differ.resolve_target_dependency(res_d.spec,  │
+│       target_dep)                                                            │
+│    69 │   │   except ValueError as exc:                                      │
+│                                                                              │
+│ /Users/adityavarma/Downloads/driftzero/driftzero/differ.py:368 in diff       │
+│                                                                              │
+│   365 │   fmt = {"type": "json_schema", "name": "DriftSpec", "strict": True, │
+│       "schema": strict_schema(DriftSpec)}                                    │
+│   366 │   r = providers.respond(build_prompt(candidates, skel, text),        │
+│       instructions=INSTRUCTIONS, model=model,                                │
+│   367 │   │   │   │   │   │     max_output_tokens=DIFF_MAX_OUTPUT_TOKENS,    │
+│       text_format=fmt, client=client, log_path=log_path)                     │
+│ ❱ 368 │   model_spec = DriftSpec.model_validate_json(r.text)                 │
+│   369 │   spec, added, restored = merge(skel, model_spec)                    │
+│   370 │   cost = Cost(r.input_tokens, r.cached_tokens, r.output_tokens,      │
+│       r.reasoning_tokens, r.usd)                                             │
+│   371 │   return DiffResult(spec=spec, candidates=candidates, skeleton=skel, │
+│       model_added=added, restored=restored,                                  │
+│                                                                              │
+│ /Users/adityavarma/Downloads/driftzero/.venv/lib/python3.11/site-packages/py │
+│ dantic/main.py:847 in model_validate_json                                    │
+│                                                                              │
+│    844 │   │   │   │   code='validate-by-alias-and-name-false',              │
+│    845 │   │   │   )                                                         │
+│    846 │   │                                                                 │
+│ ❱  847 │   │   return cls.__pydantic_validator__.validate_json(              │
+│    848 │   │   │   json_data, strict=strict, extra=extra, context=context,   │
+│        by_alias=by_alias, by_name=by_name                                    │
+│    849 │   │   )                                                             │
+│    850                                                                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ValidationError: 1 validation error for DriftSpec
+  Invalid JSON: EOF while parsing an object at line 269 column 25 
+[type=json_invalid, input_value='{\n  "api": "openai",\n ...    "replacement": 
+null', input_type=str]
+    For further information visit 
+https://errors.pydantic.dev/2.14/v/json_invalid

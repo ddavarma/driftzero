@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from driftzero import providers
 from driftzero.spec import (DriftSpec, EndpointRename, FieldAdded, FieldRemoved, FieldRenamed, TypeChange,
                             ValueChange)
@@ -365,7 +367,12 @@ def diff(changelog: str | Path | None = None, openapi_v1: str | Path | None = No
     fmt = {"type": "json_schema", "name": "DriftSpec", "strict": True, "schema": strict_schema(DriftSpec)}
     r = providers.respond(build_prompt(candidates, skel, text), instructions=INSTRUCTIONS, model=model,
                           max_output_tokens=DIFF_MAX_OUTPUT_TOKENS, text_format=fmt, client=client, log_path=log_path)
-    model_spec = DriftSpec.model_validate_json(r.text)
+    try:
+        model_spec = DriftSpec.model_validate_json(r.text)
+    except ValidationError as exc:  # e.g. output cut off at max_output_tokens: say so instead of a raw traceback
+        raise providers.ProviderError(
+            f"{model} returned an invalid DriftSpec (status={r.status}, output_tokens={r.output_tokens}/"
+            f"{DIFF_MAX_OUTPUT_TOKENS}, ${r.usd or 0:.4f}): {exc.errors()[0]['msg']}") from exc
     spec, added, restored = merge(skel, model_spec)
     cost = Cost(r.input_tokens, r.cached_tokens, r.output_tokens, r.reasoning_tokens, r.usd)
     return DiffResult(spec=spec, candidates=candidates, skeleton=skel, model_added=added, restored=restored,

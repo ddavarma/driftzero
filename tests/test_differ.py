@@ -162,3 +162,13 @@ def test_live_diff_vs_hand_written():
     # the deterministic pass alone fixes these; the model can only add to them
     for cat in ("endpoints_renamed", "fields_removed", "fields_added", "type_changes", "value_changes"):
         assert not report[cat]["only_reference"], (cat, report[cat])
+
+
+def test_truncated_model_output_is_a_clear_error_and_still_logged(tmp_path):
+    from driftzero.providers import ProviderError
+
+    cut = HAND.model_dump_json(indent=2)[:400]  # what wolverine run 3 got: JSON cut off mid-object
+    log = tmp_path / "diff.jsonl"
+    with pytest.raises(ProviderError, match=r"invalid DriftSpec \(status=completed, output_tokens=3000/"):
+        differ.diff(CHANGELOG, client=FakeClient(lambda kw: cut), log_path=log)
+    assert json.loads(log.read_text())["output_tokens"] == 3000
