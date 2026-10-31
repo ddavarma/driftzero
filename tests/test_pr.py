@@ -79,6 +79,7 @@ def test_review_findings_and_collapsed_added_tests(verified):
     findings = body.split("## Review findings")[1].split("## API change")[0]
     assert "| source | severity (confidence) | kind | where | finding |" in findings
     assert "| guard (static) | – | stale test name | `" in findings and "test_client_hits_v1_paths" in findings
+    assert "| guard (static) | – | conftest.py edited | `benchmarks/robotics_telemetry_drift/tests/conftest.py` |" in findings
     changes = body.split("## Test changes, review required")[1].split("## Verification")[0]
     assert "`['/v1/robots/amr-03/telemetry/latest', '/v1/fleet/telemetry']` → `['/v2/robots" in changes
     assert "| test data |" in changes

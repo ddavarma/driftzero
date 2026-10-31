@@ -34,7 +34,7 @@ DEFAULT_FIX_CONFIDENCE = 0.6  # --review-fix triggers on severity >= medium and 
 DEFAULT_FIX_SEVERITY = "medium"
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 REVIEW_TABLE_RULES = ("literal_change", "fixture_data")
-FINDING_RULES = ("stale_test_name", "loosened", "modified_test")
+FINDING_RULES = ("stale_test_name", "loosened", "modified_test", "conftest_edited", "autouse_fixture")
 
 
 @dataclass
@@ -144,7 +144,8 @@ def _findings(res: LoopResult) -> list[str]:
     from driftzero.reviewer import CONFIDENT, REVIEWER_LABEL
 
     g = res.guard
-    labels = {"stale_test_name": "stale test name", "loosened": "comparison loosened", "modified_test": "test edited"}
+    labels = {"stale_test_name": "stale test name", "loosened": "comparison loosened", "modified_test": "test edited",
+              "conftest_edited": "conftest.py edited", "autouse_fixture": "autouse fixture added"}
     rows = []
     for f in (g.review_items if g else []):
         if f.rule not in FINDING_RULES:
@@ -309,8 +310,8 @@ def _test_changes(res: LoopResult) -> list[str]:
         return ["_Guard did not run._"]
     table = [f for f in g.review_items if f.rule in REVIEW_TABLE_RULES]
     added = [f for f in g.review_items if f.rule == "added_test"]
-    out = ["The guard rejects removed tests, fewer asserts, skips/xfails, new conftest.py and pytest-config changes; "
-           "none were present." if g.ok else "**The guard rejected this diff.**", ""]
+    out = ["The guard rejects removed tests, fewer asserts, skips/xfails, new conftest.py and pytest-config changes, and "
+           "lists conftest.py edits and autouse fixtures under Review findings; nothing was rejected." if g.ok else "**The guard rejected this diff.**", ""]
     if table:
         out += ["| kind | where | change |", "|---|---|---|"]
         for f in table:

@@ -146,7 +146,7 @@ def test_review_fixture_data_edits():
 def test_review_existing_conftest_edit_is_allowed():
     old = "import json\n\ndef fleet():\n    return json.load(open('fleet_v1.json'))\n"
     res = check_changes([FileChange("proj/tests/conftest.py", old, old.replace("v1", "v2"))])
-    assert res.ok and rules(res.review_items) == ["literal_change"]
+    assert res.ok and rules(res.review_items) == ["conftest_edited", "literal_change"]
 
 
 def test_review_comparison_loosening():
@@ -236,3 +236,45 @@ def test_guard_on_real_muse_repair(tmp_path):
         assert not bad.ok and set(rules(bad.rejections)) == {"asserts_removed", "skip_added"}
     finally:
         repair.remove_worktree(wt)
+
+
+# ---------------------------------------------------------------- conftest edits and autouse fixtures (wolverine run 4)
+
+
+WV_CONFTEST_OLD = '''\
+import os
+import pytest
+
+
+@pytest.fixture(scope='function')
+def temp_file():
+    yield "f"
+'''
+WV_CONFTEST_NEW = WV_CONFTEST_OLD.replace("@pytest.fixture(scope='function')", '''\
+@pytest.fixture(autouse=True)
+def dummy_openai_key(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy-key")
+
+
+@pytest.fixture(scope='function')''')
+
+
+def test_existing_conftest_edit_and_new_autouse_fixture_are_review_items():
+    res = check_changes([FileChange("tests/conftest.py", WV_CONFTEST_OLD, WV_CONFTEST_NEW)])
+    assert res.ok, res.reasons
+    got = {(f.rule, f.test) for f in res.review_items}
+    assert ("conftest_edited", None) in got
+    assert ("autouse_fixture", "dummy_openai_key") in got
+
+
+def test_autouse_fixture_in_a_test_module_and_made_autouse_are_review_items():
+    old = "import pytest\n\n@pytest.fixture\ndef env():\n    pass\n\ndef test_a(env):\n    assert True\n"
+    new = old.replace("@pytest.fixture\n", "@pytest.fixture(autouse=True)\n") + \
+        "\n@pytest.fixture(autouse=True, scope='module')\ndef other():\n    pass\n"
+    res = check_changes([FileChange("tests/test_a.py", old, new)])
+    assert res.ok
+    assert {f.test for f in res.review_items if f.rule == "autouse_fixture"} == {"env", "other"}
+    # not autouse: no item; unchanged conftest: no item
+    plain = check_changes([FileChange("tests/test_a.py", old, old + "\n@pytest.fixture\ndef x():\n    pass\n"),
+                           FileChange("tests/conftest.py", WV_CONFTEST_OLD, WV_CONFTEST_OLD)])
+    assert not [f for f in plain.review_items if f.rule in ("autouse_fixture", "conftest_edited")]

@@ -447,6 +447,29 @@ def _pytest_config(name: str, text: str | None) -> object:
         return ("unparseable", text)
 
 
+def _autouse_fixtures(source: str | None) -> set[str]:
+    """Names of functions decorated @pytest.fixture(autouse=True) / @fixture(autouse=True)."""
+    if source is None:
+        return set()
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for d in node.decorator_list:
+            if not isinstance(d, ast.Call):
+                continue
+            f = d.func
+            if not ((isinstance(f, ast.Name) and f.id == "fixture") or (isinstance(f, ast.Attribute) and f.attr == "fixture")):
+                continue
+            if any(k.arg == "autouse" and isinstance(k.value, ast.Constant) and k.value.value is True for k in d.keywords):
+                out.add(node.name)
+    return out
+
+
 def check_changes(changes: list[FileChange], target_dependency: str | None = None) -> GuardResult:
     res = GuardResult(ok=True)
     for ch in sorted(changes, key=lambda c: c.path):
@@ -471,6 +494,12 @@ def check_changes(changes: list[FileChange], target_dependency: str | None = Non
             continue
         if ch.path.endswith(".py"):
             if _is_test_path(ch.path):
+                if name == "conftest.py" and ch.new is not None and ch.old != ch.new:
+                    res.review_items.append(Finding("conftest_edited", ch.path, f"existing {ch.path} edited; it applies "
+                                                    "to every test under it"))
+                for fx in sorted(_autouse_fixtures(ch.new) - _autouse_fixtures(ch.old)):
+                    res.review_items.append(Finding("autouse_fixture", ch.path, f"autouse fixture {fx} added: it runs "
+                                                    "around every test in scope", test=fx))
                 _check_python(ch.path, ch.old, ch.new, res)
             continue
         if _is_test_path(ch.path):

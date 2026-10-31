@@ -75,6 +75,6 @@ pyproject.toml          # `driftzero` console entry point
 - Build incrementally: each stage runnable on its own with a `python -m driftzero.<stage>` smoke path before wiring the next.
 - Log tokens, provider, latency and cost per call to `.driftzero/runs/<id>.jsonl`; the PR body reads from it.
 - All LLM calls go through `driftzero/providers.py` (one OpenAI-compatible client per provider, retries, timeouts).
-- The repair may change tests only by updating literals and fixture data to the v2 contract and by adding tests. It may never remove a test, reduce asserts, add skip/xfail, or alter pytest configuration. The guard enforces this and lists every allowed change for human review.
+- The repair may change tests only by updating literals and fixture data to the v2 contract and by adding tests. It may never remove a test, reduce asserts, add skip/xfail, add a conftest.py, or alter pytest configuration. Edits to an existing conftest.py and new autouse fixtures are not rejected but are always listed as review items, because they change the environment of every test in scope. The guard enforces this and lists every allowed change for human review.
 - Keep every commit small and pushed; the commit log is evidence for the "new work only" rule.
 - Never state unverified specifics as fact, in code comments, docs, PR bodies or reports. If something is unconfirmed, say so or verify it first.
