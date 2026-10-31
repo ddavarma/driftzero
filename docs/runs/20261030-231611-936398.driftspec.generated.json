@@ -1,0 +1,386 @@
+{
+  "api": "openai",
+  "from_version": "v1",
+  "to_version": "v2",
+  "summary": "v1 is a total rewrite requiring explicit client instantiation with client = OpenAI() instead of global openai.* functions, with all resource methods namespaced under client.* and config/errors renamed (api_base->base_url, proxy->proxies, InvalidRequestError->BadRequestError, api_resources->resources). Response objects are now pydantic models instead of dicts and must use attribute access with model_dump()/model_dump_json(), and list() pagination now auto-iterates instead of auto_paging_iter(). Many globals and helpers were removed including api_key_path/app_info/debug/log/OpenAIError, Audio.transcribe_raw/translate_raw, ErrorObject/Customer/Deployment/Engine, File.find_matching_files, embeddings_utils, requestssession/aiosession and all a* methods (use OpenAI client, async client, httpx, cookbook, or azure-mgmt-cognitiveservices).",
+  "endpoints_renamed": [
+    {
+      "method": "create",
+      "old": "openai.Audio.transcribe",
+      "new": "client.audio.transcriptions.create",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "create",
+      "old": "openai.Audio.translate",
+      "new": "client.audio.translations.create",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "create",
+      "old": "openai.ChatCompletion.create",
+      "new": "client.chat.completions.create",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "create",
+      "old": "openai.Completion.create",
+      "new": "client.completions.create",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "create",
+      "old": "openai.Edit.create",
+      "new": "client.edits.create",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "create",
+      "old": "openai.Embedding.create",
+      "new": "client.embeddings.create",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "create",
+      "old": "openai.File.create",
+      "new": "client.files.create",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "list",
+      "old": "openai.File.list",
+      "new": "client.files.list",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "retrieve",
+      "old": "openai.File.retrieve",
+      "new": "client.files.retrieve",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "retrieve_content",
+      "old": "openai.File.download",
+      "new": "client.files.retrieve_content",
+      "notes": "Switch to explicit client instantiation with client = OpenAI()."
+    },
+    {
+      "method": "cancel",
+      "old": "openai.FineTune.cancel",
+      "new": "client.fine_tunes.cancel",
+      "notes": ""
+    },
+    {
+      "method": "list",
+      "old": "openai.FineTune.list",
+      "new": "client.fine_tunes.list",
+      "notes": ""
+    },
+    {
+      "method": "list_events",
+      "old": "openai.FineTune.list_events",
+      "new": "client.fine_tunes.list_events",
+      "notes": ""
+    },
+    {
+      "method": "list_events",
+      "old": "openai.FineTune.stream_events",
+      "new": "client.fine_tunes.list_events(stream=True)",
+      "notes": "Pass stream=True to stream events."
+    },
+    {
+      "method": "retrieve",
+      "old": "openai.FineTune.retrieve",
+      "new": "client.fine_tunes.retrieve",
+      "notes": ""
+    },
+    {
+      "method": "delete",
+      "old": "openai.FineTune.delete",
+      "new": "client.fine_tunes.delete",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.FineTune.create",
+      "new": "client.fine_tunes.create",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.FineTuningJob.create",
+      "new": "client.fine_tuning.jobs.create",
+      "notes": ""
+    },
+    {
+      "method": "cancel",
+      "old": "openai.FineTuningJob.cancel",
+      "new": "client.fine_tuning.jobs.cancel",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.FineTuningJob.delete",
+      "new": "client.fine_tuning.jobs.create",
+      "notes": "As listed in changelog: FineTuningJob.delete() -> client.fine_tuning.jobs.create()."
+    },
+    {
+      "method": "retrieve",
+      "old": "openai.FineTuningJob.retrieve",
+      "new": "client.fine_tuning.jobs.retrieve",
+      "notes": ""
+    },
+    {
+      "method": "list",
+      "old": "openai.FineTuningJob.list",
+      "new": "client.fine_tuning.jobs.list",
+      "notes": "list() methods now support automatic iteration."
+    },
+    {
+      "method": "list_events",
+      "old": "openai.FineTuningJob.list_events",
+      "new": "client.fine_tuning.jobs.list_events",
+      "notes": ""
+    },
+    {
+      "method": "generate",
+      "old": "openai.Image.create",
+      "new": "client.images.generate",
+      "notes": ""
+    },
+    {
+      "method": "create_variation",
+      "old": "openai.Image.create_variation",
+      "new": "client.images.create_variation",
+      "notes": ""
+    },
+    {
+      "method": "edit",
+      "old": "openai.Image.create_edit",
+      "new": "client.images.edit",
+      "notes": ""
+    },
+    {
+      "method": "list",
+      "old": "openai.Model.list",
+      "new": "client.models.list",
+      "notes": ""
+    },
+    {
+      "method": "delete",
+      "old": "openai.Model.delete",
+      "new": "client.models.delete",
+      "notes": ""
+    },
+    {
+      "method": "retrieve",
+      "old": "openai.Model.retrieve",
+      "new": "client.models.retrieve",
+      "notes": ""
+    },
+    {
+      "method": "create",
+      "old": "openai.Moderation.create",
+      "new": "client.moderations.create",
+      "notes": ""
+    }
+  ],
+  "fields_removed": [
+    {
+      "schema_name": "openai",
+      "path": "api_key_path",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1; no replacement stated."
+    },
+    {
+      "schema_name": "openai",
+      "path": "app_info",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1; no replacement stated."
+    },
+    {
+      "schema_name": "openai",
+      "path": "debug",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1; no replacement stated."
+    },
+    {
+      "schema_name": "openai",
+      "path": "log",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1; no replacement stated."
+    },
+    {
+      "schema_name": "openai",
+      "path": "OpenAIError",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed; use BadRequestError and other renamed errors. InvalidRequestError -> BadRequestError."
+    },
+    {
+      "schema_name": "openai",
+      "path": "Audio.transcribe_raw",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed."
+    },
+    {
+      "schema_name": "openai",
+      "path": "Audio.translate_raw",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed."
+    },
+    {
+      "schema_name": "openai",
+      "path": "ErrorObject",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1."
+    },
+    {
+      "schema_name": "openai",
+      "path": "Customer",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1."
+    },
+    {
+      "schema_name": "openai",
+      "path": "api_version",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1."
+    },
+    {
+      "schema_name": "openai",
+      "path": "verify_ssl_certs",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1."
+    },
+    {
+      "schema_name": "openai",
+      "path": "api_type",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1."
+    },
+    {
+      "schema_name": "openai",
+      "path": "enable_telemetry",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1."
+    },
+    {
+      "schema_name": "openai",
+      "path": "ca_bundle_path",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1."
+    },
+    {
+      "schema_name": "openai",
+      "path": "requestssession",
+      "old_type": "any",
+      "replacement": "httpx",
+      "notes": "we now use httpx"
+    },
+    {
+      "schema_name": "openai",
+      "path": "aiosession",
+      "old_type": "any",
+      "replacement": "httpx",
+      "notes": "we now use httpx"
+    },
+    {
+      "schema_name": "openai",
+      "path": "Deployment",
+      "old_type": "any",
+      "replacement": "azure-mgmt-cognitiveservices",
+      "notes": "only used for Azure - please use the azure-mgmt-cognitiveservices client library instead"
+    },
+    {
+      "schema_name": "openai",
+      "path": "Engine",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1."
+    },
+    {
+      "schema_name": "openai",
+      "path": "File.find_matching_files",
+      "old_type": "any",
+      "replacement": null,
+      "notes": "Removed in v1."
+    },
+    {
+      "schema_name": "openai",
+      "path": "embeddings_utils",
+      "old_type": "any",
+      "replacement": "cookbook",
+      "notes": "now in the cookbook"
+    },
+    {
+      "schema_name": "openai",
+      "path": "auto_paging_iter",
+      "old_type": "any",
+      "replacement": "automatic iteration in list()",
+      "notes": "Previously you would have to explicitly call a .auto_paging_iter() method instead. All list() methods that support pagination now support automatic iteration."
+    },
+    {
+      "schema_name": "openai",
+      "path": "a*",
+      "old_type": "any",
+      "replacement": "async client",
+      "notes": "all a* methods have been removed; the async client must be used instead"
+    }
+  ],
+  "fields_added": [],
+  "fields_renamed": [
+    {
+      "schema_name": "openai",
+      "old_path": "api_base",
+      "new_path": "base_url",
+      "notes": "Global config rename."
+    },
+    {
+      "schema_name": "openai",
+      "old_path": "proxy",
+      "new_path": "proxies",
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "old_path": "InvalidRequestError",
+      "new_path": "BadRequestError",
+      "notes": ""
+    },
+    {
+      "schema_name": "openai",
+      "old_path": "api_resources",
+      "new_path": "resources",
+      "notes": ""
+    }
+  ],
+  "type_changes": [
+    {
+      "schema_name": "ApiResponse",
+      "path": "root",
+      "old_type": "dict",
+      "new_type": "pydantic BaseModel",
+      "notes": "Response objects are now pydantic models and no longer conform to the dictionary shape. Convert with model.model_dump(): completion['choices'][0]['text'] -> completion.choices[0].text; completion.get('usage') -> dict(completion).get('usage'); json.dumps(completion, indent=2) -> completion.model_dump_json(indent=2)."
+    }
+  ],
+  "value_changes": [],
+  "target_dependency": {
+    "name": "openai",
+    "constraint": "<2,>=1",
+    "source": "cli"
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "passed": false,
+  "backend": "modal",
+  "project_rel": ".",
+  "agent": {
+    "name": "agent",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--junitxml=/tmp/agent.xml",
+      "tests/"
+    ],
+    "exit_code": 2,
+    "stdout": "\n==================================== ERRORS ====================================\n___________________ ERROR collecting tests/test_wolverine.py ___________________\nImportError while importing test module '/work/wt/tests/test_wolverine.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n/usr/local/lib/python3.11/importlib/__init__.py:126: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntests/test_wolverine.py:3: in <module>\n    from wolverine import apply_changes, json_validated_response\nwolverine/__init__.py:1: in <module>\n    from .wolverine import apply_changes, json_validated_response # noqa\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nwolverine/wolverine.py:8: in <module>\n    import openai\nE   ModuleNotFoundError: No module named 'openai'\n=========================== short test summary info ============================\nERROR tests/test_wolverine.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.09s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"1\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"0.099\" timestamp=\"2026-10-31T03:10:42.029575+00:00\" hostname=\"modal\"><testcase classname=\"\" name=\"tests.test_wolverine\" time=\"0.000\"><error message=\"collection failure\">ImportError while importing test module '/work/wt/tests/test_wolverine.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n/usr/local/lib/python3.11/importlib/__init__.py:126: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntests/test_wolverine.py:3: in &lt;module&gt;\n    from wolverine import apply_changes, json_validated_response\nwolverine/__init__.py:1: in &lt;module&gt;\n    from .wolverine import apply_changes, json_validated_response # noqa\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nwolverine/wolverine.py:8: in &lt;module&gt;\n    import openai\nE   ModuleNotFoundError: No module named 'openai'</error></testcase></testsuite></testsuites>",
+    "tests": 1,
+    "failures": 0,
+    "errors": 1,
+    "skipped": 0,
+    "duration_s": 0.099
+  },
+  "holdout": {
+    "name": "holdout",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--noconftest",
+      "-c",
+      "/dev/null",
+      "--rootdir",
+      ".",
+      "--junitxml=/tmp/holdout.xml",
+      "holdout_v2/"
+    ],
+    "exit_code": 2,
+    "stdout": "\n==================================== ERRORS ====================================\n____________ ERROR collecting holdout_v2/test_contract_openai_v1.py ____________\nImportError while importing test module '/work/wt/holdout_v2/test_contract_openai_v1.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n/usr/local/lib/python3.11/importlib/__init__.py:126: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nholdout_v2/test_contract_openai_v1.py:17: in <module>\n    import httpx  # noqa: E402\n    ^^^^^^^^^^^^\nE   ModuleNotFoundError: No module named 'httpx'\n=========================== short test summary info ============================\nERROR holdout_v2/test_contract_openai_v1.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.10s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"1\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"0.107\" timestamp=\"2026-10-31T03:10:42.594451+00:00\" hostname=\"modal\"><testcase classname=\"\" name=\"holdout_v2.test_contract_openai_v1\" time=\"0.000\"><error message=\"collection failure\">ImportError while importing test module '/work/wt/holdout_v2/test_contract_openai_v1.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n/usr/local/lib/python3.11/importlib/__init__.py:126: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nholdout_v2/test_contract_openai_v1.py:17: in &lt;module&gt;\n    import httpx  # noqa: E402\n    ^^^^^^^^^^^^\nE   ModuleNotFoundError: No module named 'httpx'</error></testcase></testsuite></testsuites>",
+    "tests": 1,
+    "failures": 0,
+    "errors": 1,
+    "skipped": 0,
+    "duration_s": 0.107
+  },
+  "setup": {
+    "command": [
+      [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "--disable-pip-version-check",
+        "-r",
+        "requirements.txt",
+        "openai<2,>=1"
+      ]
+    ],
+    "exit_code": 1,
+    "output": "ERROR: Cannot install openai<2 and >=1 and openai==0.27.4 because these package versions have conflicting dependencies.\nERROR: ResolutionImpossible: for help visit https://pip.pypa.io/en/latest/topics/dependency-resolution/#dealing-with-dependency-conflicts",
+    "steps": [
+      {
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-q",
+          "--disable-pip-version-check",
+          "-r",
+          "requirements.txt",
+          "openai<2,>=1"
+        ],
+        "exit_code": 1,
+        "output": "ERROR: Cannot install openai<2 and >=1 and openai==0.27.4 because these package versions have conflicting dependencies.\nERROR: ResolutionImpossible: for help visit https://pip.pypa.io/en/latest/topics/dependency-resolution/#dealing-with-dependency-conflicts"
+      }
+    ]
+  },
+  "wall_time_s": 4.4,
+  "sandbox_id": "sb-01M67Z05Q7DDE52QN8GB2A7YNC"
+}
