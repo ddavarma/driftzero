@@ -28,22 +28,26 @@ driftzero migrate --repo https://github.com/ddavarma/fleet-telemetry-v1 \
  target            driftzero/target.py         local path, or a git URL cloned to .driftzero/clones/<id>
       │
       ▼
- blast radius      driftzero/blast_radius.py   Python ast, no LLM: which fields, endpoints and
-      │                                         constants are touched, then callers, fixtures and
-      │                                         tests by import / call / fixture edges
+ blast radius      driftzero/blast_radius.py   Python ast, no LLM: which fields, endpoints, SDK call
+      │                                         paths (attribute chains, patch strings) and constants are
+      │                                         touched, then callers, fixtures and tests by import / call /
+      │                                         fixture edges
       ▼
  worktree          driftzero/repair.py         git worktree .driftzero/wt-<id>, branch driftzero/<id>;
       │                                         hold-out tests hidden (skip-worktree)
       ▼
  ┌──► repair       driftzero/repair.py         muse exec --json --approval-mode never, muse-spark-1.3,
- │    │                                         schema-shaped answer; JSONL events streamed as a live trace
+ │    │                                         schema-shaped answer; JSONL events streamed as a live trace;
+ │    │                                         a failed Muse run or an empty diff ends the run here
  │    ▼
  │   guard         driftzero/guard.py          AST diff of tests: reject removed tests, fewer asserts,
  │    │                                         skip/xfail, bare comparisons, new conftest, pytest config;
- │    │                                         report literal / fixture / tolerance edits for review
+ │    │                                         report literal / fixture / tolerance edits, conftest.py edits
+ │    │                                         and autouse fixtures for review
  │    ▼
- │   verify        driftzero/verify.py         Modal sandbox (debian_slim py3.11): pip install -e, then
- │    │                                         the agent's tests/ and the hold-out suite as separate runs
+ │   verify        driftzero/verify.py         Modal sandbox (debian_slim py3.11): the target's declared
+ │    │                                         dependencies + the target pin + the hold-outs' requirements,
+ │    │                                         then the agent's tests/ and the hold-out suite as separate runs
  │    │
  └────┤ fail (≤ 3 iterations): guard reasons, agent pytest output, and hold-out failures
       │                         redacted to test name + one-line message
@@ -87,6 +91,10 @@ driftzero migrate --repo $B --spec $B/driftspec_v2.json             # full run +
 # a remote target, straight from the changelog: clone, repair, verify, PR on the target
 driftzero migrate --repo https://github.com/ddavarma/fleet-telemetry-v1 \
     --changelog $B/CHANGELOG_v2.md --openapi-v1 $B/openapi_v1.json --openapi-v2 $B/openapi_v2.json
+
+# a changelog with no OpenAPI documents: version labels come from --target-dep (or --from-version/--to-version)
+driftzero migrate --repo https://github.com/ddavarma/wolverine-driftzero-test \
+    --changelog benchmarks/openai_v0_to_v1/CHANGELOG_openai_v1.md --target-dep "openai>=1,<2" --review-fix
 
 driftzero pr-body --task <id> [--update <pr>]                         # re-render a PR body from a saved run
 ```
@@ -200,8 +208,11 @@ on the repo:
 - **Run 1 `20261030-231027-4c08a3`: Muse never started.** All 3 iterations exited in under a second with `session
   worktree source proof filesystem operation failed`. Muse Code itself failed: the same error came back for a
   JobTracker clone in the same layout for about two minutes, and then went away for both with nothing changed
-  (cause unknown). DriftZero spent 3 verify rounds on an unchanged worktree instead of stopping.
-- **Run 2 `20261030-231611-936398`: DriftZero crashed in the guard.** Muse finished (21 steps). wolverine's
+  (cause unknown). DriftZero spent 3 verify rounds on an unchanged worktree instead of stopping. **Fixed since**
+  (0a22a0e): a nonzero Muse exit, or a completed run with no diff, now ends the run at once with that error and
+  Muse's stderr tail, with no guard or verify.
+- **Run 2 `20261030-231611-936398`: DriftZero crashed in the guard.** Muse finished (21 steps, about $0.27 from
+  the console's token counts; the iteration was never logged). wolverine's
   `.gitignore` has no `__pycache__`, so the `.pyc` files from Muse's test runs entered the diff, and the guard
   crashed decoding one (`UnicodeDecodeError`). **Fixed** (8d62bdb): caches are excluded from the diff and the PR
   commit, and the guard tolerates binary files. The same commit fixes the retry prompt and PR table, which labelled
@@ -215,26 +226,43 @@ on the repo:
   - Differ: $0.047, 57 entries, all from the changelog. Repair: 19 steps.
   - Muse's changes: `requirements.txt` `openai==0.27.4` → `openai<2,>=1`; a lazy `_get_client()`, so importing
     wolverine needs no key; `chat.completions.create`; `models.list().data` read with `.id`; the mock target updated
-    to `openai.resources.chat.completions.Completions.create`.
+    to `openai.resources.chat.completions.Completions.create`; an autouse fixture added to the existing
+    `tests/conftest.py` that sets a dummy `OPENAI_API_KEY`.
   - Modal: agent suite 6/6, hold-outs 7/7. Reviewer: approve, 3 findings, all below 0.5 confidence; no fix pass.
   - $0.39 total, 206 s.
+  - The PR title and body were later re-rendered with the fixes below (`driftzero pr-body`, then `gh pr edit`). The
+    title now reads "to openai 1.x" instead of "to openai v2". A note at the top of the body says what changed
+    after the run ([`docs/runs/20261030-232336-30685b.pr-v2.md`](docs/runs/20261030-232336-30685b.pr-v2.md)).
 
-Where wolverine differed from JobTracker, reported and not patched:
+Where wolverine differed from JobTracker. Each item was reported first, then fixed in a later commit with a test that
+fails before the fix and passes after:
 
 - **The blast radius found 0 symbols, 0 files, 0 tests in every run** (JobTracker: 11 symbols, 3 tests). The differ
   files the SDK renames (`openai.ChatCompletion.create()` → `client.chat.completions.create()`) under
-  `endpoints_renamed`, and blast radius matches those only as URL templates. JobTracker's radius was seeded entirely
-  by the error-class entries: `openai.OpenAIError`, which is falsely listed as removed, and `InvalidRequestError`.
-  wolverine uses neither. Swapping the DriftSpecs between the two repos gives the same counts. So Muse got no impact
-  map, and the reviewer got no unchanged-test context. Its highest finding (0.45) worried about dict-subscripted
-  responses the code doesn't have.
-- **The guard let a test-infrastructure change through without listing it.** Muse added an autouse fixture to the
-  existing `tests/conftest.py` that sets a dummy `OPENAI_API_KEY`. The guard rejects *new* conftest files, but it
-  neither rejected this edit nor reported it for review. The only item it listed was the mock-target literal. The
-  hold-outs run with `--noconftest`, so they were unaffected.
-- **The differ's version labels varied.** JobTracker's run said `v0 → v1.0.0`; run 4 said `v1 → v2`, so the PR title
-  and commit message say "to openai v2" although the pin is `openai<2,>=1`. The PR body also describes the hold-outs
-  as "derived only from `openapi_v2.json`", which is fleet-benchmark wording.
+  `endpoints_renamed`, and blast radius tried those only as URL templates. JobTracker's radius had been seeded
+  entirely by a single entry: `openai.OpenAIError`, which the guide falsely lists as removed (an earlier version of
+  this section also named `InvalidRequestError`; it never matched). wolverine doesn't use `OpenAIError`, so Muse got
+  no impact map and the reviewer no unchanged-test context; its highest finding (0.45) worried about
+  dict-subscripted responses the code doesn't have. **Fixed**
+  (ae3c405): drift paths without a slash now match as attribute chains, resolved through imports (`openai.X.y`,
+  aliases, from-imports), and as dotted strings such as `mock.patch`/`@patch` targets. New counts with each run's
+  saved DriftSpec:
+  - wolverine: **5 symbols, 2 files, 1 test** (was 0). `json_validated_response` and `check_model_availability` are
+    matched directly, and `send_error_to_gpt` and `main` are reached through them. The test is found by its patch
+    string.
+  - JobTracker: 11 symbols, 3 files, 3 tests. Same sets as before, now also matched by the renames.
+  - fleet: 40 symbols, 11 files, 16 tests. The full output is byte-identical to before, for both the hand-written
+    and the generated DriftSpec.
+- **The guard let a test-infrastructure change through without listing it.** That was the autouse `conftest.py`
+  fixture above; the only item the guard listed was the mock-target literal. The hold-outs run with
+  `--noconftest`, so they were unaffected. **Fixed** (4383a52): edits to an existing `conftest.py` and newly
+  autouse fixtures are review items, shown in the PR's findings table. The CLAUDE.md tests rule says so.
+- **The differ's model chose the version labels.** JobTracker's run said `v0 → v1.0.0` and run 4 said `v1 → v2`, so
+  the PR said "to openai v2" although the pin is `openai<2,>=1`. The PR body also described the hold-outs as
+  "derived only from `openapi_v2.json`" (fleet wording). **Fixed** (74573e0): labels come from `--from-version`/
+  `--to-version`, else from `--target-dep` (`openai>=1,<2` gives `<1 → 1.x`), else from the OpenAPI documents'
+  version tags, and never from the model. With none of these, `migrate`/`diff` stop with an error. The PR's hold-out
+  line comes from the target's `holdout_description` and `validated_against` in `benchmarks/targets.json`.
 - Logs: [`docs/runs/20261030-231027-4c08a3.*`](docs/runs/), [`docs/runs/20261030-231611-936398.*`](docs/runs/),
   [`docs/runs/wolverine-run3-20261030-232055.differ-crash.console.log`](docs/runs/),
   [`docs/runs/20261030-232336-30685b.*`](docs/runs/).
