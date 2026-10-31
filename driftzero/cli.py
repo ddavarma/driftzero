@@ -46,6 +46,8 @@ def migrate(
     review_fix_min_confidence: float = typer.Option(0.6, help="--review-fix triggers on severity >= medium and "
                                                               "confidence >= this."),
     review_fix_min_severity: str = typer.Option("medium", help="--review-fix severity floor: low | medium | high."),
+    follow: bool = typer.Option(False, "--follow", help="Open `driftzero watch` on this run in a separate terminal "
+                                "(a tmux pane, else a Terminal.app window). The run itself is unchanged."),
 ) -> None:
     """(diff ->) blast radius -> Muse repair -> guard -> sandbox verify (retrying) -> PR -> open-weights review."""
     import shlex
@@ -63,6 +65,8 @@ def migrate(
         raise typer.BadParameter(f"--repo {repo!r} is neither a directory nor a git URL")
     t_start = time.monotonic()
     command = "driftzero " + " ".join(shlex.quote(a) for a in sys.argv[1:])
+    if follow:
+        _spawn_follow(repo, differ=not spec)
     diff_info = None
     if not spec:
         typer.echo("=== diff: changelog / OpenAPI -> DriftSpec")
@@ -145,6 +149,66 @@ def migrate(
                        f"{review_fix_min_confidence} (policy-required findings excluded)")
     usd = "n/a" if res.cost.usd is None else f"${res.cost.usd:.4f}"
     typer.echo(f"{len(res.iterations)} iteration(s), {usd} total, {time.monotonic() - t_start:.0f}s wall end to end")
+
+
+def _spawn_follow(repo: str, *, differ: bool) -> None:
+    """--follow: start the watcher as a separate process; it finds this run by its start time."""
+    import os
+    import sys
+    import time
+
+    from driftzero import target as target_mod
+    from driftzero import watch as watch_mod
+
+    if target_mod.is_url(repo):
+        home = target_mod.home_dir()
+    else:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=repo, capture_output=True, text=True)
+        home = Path(top.stdout.strip()) if top.returncode == 0 else Path(repo).resolve()
+    since = time.time()
+    argv = [sys.executable, "-m", "driftzero.cli", "watch", "--next", "--since", f"{since:.3f}",
+            "--pid", str(os.getpid()), "--home", str(home),
+            "--save", str(home / ".driftzero" / "runs" / f"watch-{int(since)}.txt")]
+    if not differ:
+        argv.append("--no-differ")
+    try:
+        where = watch_mod.spawn_watcher(argv, target_mod.home_dir())
+        typer.echo(f"--follow: watcher started in a {where}")
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        typer.echo(f"--follow: could not open a terminal for the watcher ({exc}); run it yourself:\n  "
+                   + " ".join(argv), err=True)
+
+
+@app.command()
+def watch(
+    run_id: str = typer.Argument(None, help="Task id (.driftzero/runs/<id>.jsonl). Omit with --next."),
+    replay: float = typer.Option(None, "--replay", help="Play a finished run from its logs at this speed "
+                                 "(10 = ten times real time). No model calls."),
+    next_run: bool = typer.Option(False, "--next", help="Wait for the next run that starts after --since."),
+    since: float = typer.Option(None, help="Unix time; with --next (default: now)."),
+    pid: int = typer.Option(None, help="Stop when this process (the migrate run) exits."),
+    differ: bool = typer.Option(True, "--differ/--no-differ", help="With --next: whether the run starts with the differ."),
+    home: Path = typer.Option(None, help="Where .driftzero/ lives (default: DriftZero's checkout)."),
+    save: Path = typer.Option(None, help="Also write the final frame here (.svg, or plain text otherwise)."),
+    height: int = typer.Option(38, help="Rows to draw (width is fixed at 120 columns)."),
+) -> None:
+    """Live view of a run (stages, Muse's steps, verification, review, cost); --replay plays a finished one."""
+    import time
+
+    from driftzero import watch as watch_mod
+    from driftzero.target import home_dir
+
+    home = Path(home).resolve() if home else home_dir()
+    if replay is not None:
+        if not run_id:
+            raise typer.BadParameter("--replay needs a run id")
+        runs = watch_mod.find_runs_dir(run_id, home)
+        watch_mod.run_replay(runs, run_id, replay, save=save, height=height)
+        return
+    if not run_id and not next_run:
+        raise typer.BadParameter("give a run id, or --next")
+    watch_mod.run_live(home / ".driftzero", run_id, since=since or (time.time() if next_run else None), pid=pid,
+                       differ=differ, save=save, height=height)
 
 
 def _fix_status(info: dict) -> str:
