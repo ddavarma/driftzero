@@ -1,0 +1,112 @@
+{
+  "passed": false,
+  "backend": "modal",
+  "project_rel": ".",
+  "agent": {
+    "name": "agent",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--junitxml=/tmp/agent.xml",
+      "tests/"
+    ],
+    "exit_code": 0,
+    "stdout": "....................                                                     [100%]\n20 passed in 0.11s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"20\" time=\"0.112\" timestamp=\"2026-10-31T07:18:45.551157+00:00\" hostname=\"modal\"><testcase classname=\"tests.test_alerts\" name=\"test_tilted_robot_raises_tilt_alert\" time=\"0.001\" /><testcase classname=\"tests.test_alerts\" name=\"test_noisy_localisation_raises_noisy_alert\" time=\"0.000\" /><testcase classname=\"tests.test_alerts\" name=\"test_low_battery_and_healthy_robot\" time=\"0.000\" /><testcase classname=\"tests.test_alerts\" name=\"test_fleet_summary\" time=\"0.000\" /><testcase classname=\"tests.test_alerts\" name=\"test_low_health_raises_health_alert\" time=\"0.000\" /><testcase classname=\"tests.test_charging\" name=\"test_charge_minutes\" time=\"0.000\" /><testcase classname=\"tests.test_charging\" name=\"test_plan_charging_emptiest_first_and_shares_docks\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_parse_frame_reads_pose_and_noise\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_parse_batch_rejects_other_api_version\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_missing_field_raises_parse_error\" time=\"0.000\" /><testcase classname=\"tests.test_client\" name=\"test_client_hits_v1_paths\" time=\"0.000\" /><testcase classname=\"tests.test_fusion\" name=\"test_fused_position_favours_low_noise\" time=\"0.000\" /><testcase classname=\"tests.test_fusion\" name=\"test_equal_noise_gives_plain_mean\" time=\"0.001\" /><testcase classname=\"tests.test_fusion\" name=\"test_heading_mean_handles_wraparound\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_zero_angles_is_identity\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_rotation_is_orthonormal\" time=\"0.001\" /><testcase classname=\"tests.test_orientation\" name=\"test_yaw_90_points_along_map_y\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_heading_wraps_into_0_360\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_tilt_from_roll_and_pitch\" time=\"0.000\" /><testcase classname=\"tests.test_orientation\" name=\"test_negated_quaternion_gives_same_rotation\" time=\"0.000\" /></testsuite></testsuites>",
+    "tests": 20,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_s": 0.112
+  },
+  "holdout": {
+    "name": "holdout",
+    "command": [
+      "python",
+      "-m",
+      "pytest",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--noconftest",
+      "-c",
+      "/dev/null",
+      "--rootdir",
+      ".",
+      "--junitxml=/tmp/holdout.xml",
+      "holdout_v2/"
+    ],
+    "exit_code": 1,
+    "stdout": ".......F                                                                 [100%]\n=================================== FAILURES ===================================\n_______________ test_health_outside_documented_range_is_rejected _______________\n\n    def test_health_outside_documented_range_is_rejected():\n        schema = SPEC[\"components\"][\"schemas\"][\"TelemetryFrame\"][\"properties\"][\"health\"]\n        lo, hi = schema[\"minimum\"], schema[\"maximum\"]  # openapi_v2.json: health is 0..1\n        ok = copy.deepcopy(BY_ID[\"amr-01\"])\n        assert parse_frame(ok).health == ok[\"health\"]  # an in-range frame must parse (rules out vacuous passes)\n        for bad in (hi + 1.0, lo - 0.1, float(\"nan\")):\n            payload = dict(ok, health=bad)\n>           with pytest.raises(TelemetryParseError):\nE           Failed: DID NOT RAISE TelemetryParseError\n\nholdout_v2/test_contract_v2.py:125: Failed\n=========================== short test summary info ============================\nFAILED holdout_v2/test_contract_v2.py::test_health_outside_documented_range_is_rejected\n1 failed, 7 passed in 0.09s\n",
+    "stderr": "",
+    "junit_xml": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"1\" skipped=\"0\" tests=\"8\" time=\"0.096\" timestamp=\"2026-10-31T07:18:46.095963+00:00\" hostname=\"modal\"><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_client_requests_v2_paths\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_v2_snapshot_parses_and_v1_version_is_rejected\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_negative_qw_robots_heading_and_tilt\" time=\"0.001\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_health_alert_only_below_threshold\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_noise_is_derived_from_covariance_trace\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_v1_shaped_frame_is_rejected\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_charging_schedule_unaffected\" time=\"0.000\" /><testcase classname=\"holdout_v2.test_contract_v2\" name=\"test_health_outside_documented_range_is_rejected\" time=\"0.000\"><failure message=\"Failed: DID NOT RAISE TelemetryParseError\">def test_health_outside_documented_range_is_rejected():\n        schema = SPEC[\"components\"][\"schemas\"][\"TelemetryFrame\"][\"properties\"][\"health\"]\n        lo, hi = schema[\"minimum\"], schema[\"maximum\"]  # openapi_v2.json: health is 0..1\n        ok = copy.deepcopy(BY_ID[\"amr-01\"])\n        assert parse_frame(ok).health == ok[\"health\"]  # an in-range frame must parse (rules out vacuous passes)\n        for bad in (hi + 1.0, lo - 0.1, float(\"nan\")):\n            payload = dict(ok, health=bad)\n&gt;           with pytest.raises(TelemetryParseError):\nE           Failed: DID NOT RAISE TelemetryParseError\n\nholdout_v2/test_contract_v2.py:125: Failed</failure></testcase></testsuite></testsuites>",
+    "tests": 8,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0,
+    "duration_s": 0.096
+  },
+  "setup": {
+    "command": [
+      [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "--disable-pip-version-check",
+        "--no-build-isolation",
+        "-e",
+        "."
+      ],
+      [
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-q",
+        "--disable-pip-version-check",
+        "pytest"
+      ]
+    ],
+    "exit_code": 0,
+    "output": "",
+    "steps": [
+      {
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-q",
+          "--disable-pip-version-check",
+          "--no-build-isolation",
+          "-e",
+          "."
+        ],
+        "exit_code": 0,
+        "output": ""
+      },
+      {
+        "command": [
+          "python",
+          "-m",
+          "pip",
+          "install",
+          "-q",
+          "--disable-pip-version-check",
+          "pytest"
+        ],
+        "exit_code": 0,
+        "output": ""
+      }
+    ]
+  },
+  "wall_time_s": 4.3,
+  "sandbox_id": "sb-01M68D6CVF1C9ND0KCBWSG0WH6"
+}

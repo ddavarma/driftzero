@@ -106,6 +106,39 @@ driftzero pr-body --task <id> [--update <pr>]                         # re-rende
 posts a COMMENT and says so). `--contributor` uses Meta's contributor tier (about 12x cheaper, but Meta trains on it; for development only).
 `--local` verifies in a temp copy instead of Modal. `--max-iterations N` caps the repair/verify loop.
 
+### Watching a run
+
+```bash
+driftzero watch <run-id>                    # live view of a run in progress (or of a finished one)
+driftzero watch <run-id> --replay 10        # play a finished run from its logs at 10x; no model calls
+driftzero migrate ... --follow              # also open the watcher in a separate terminal (tmux pane or Terminal.app)
+```
+
+![driftzero watch replaying fleet-telemetry-v1 PR #4, iteration 2](docs/watch/replay-pr4-iteration2.png)
+
+A 120-column rich view with four parts:
+- **Stages.** The eight stages, each with its status and elapsed time.
+- **Muse.** Muse's stream: one line per model step and per tool call, showing the command and its exit code, or the files written.
+- **Results.** The guard, the Modal install, the agent suite and the per-test hold-out results, and the reviewer's findings with their confidence.
+- **Bottom bar.** Tokens, cached share, USD and wall time.
+
+It is display only. It reads `.driftzero/runs/<id>.jsonl`, Muse's event files and the per-iteration
+prompt/diff/verify files, and no pipeline module knows it exists. `--follow` only spawns it as its own process,
+and the watcher finds the run by its start time. Two runs started in the same `.driftzero/` at the same moment
+could confuse it.
+
+There are three things to know when reading it:
+- **Guard and verify (live).** Nothing is written between the guard finishing and the sandbox returning. So, live, the guard shows as running until `i<n>.verify.json` lands, and its time is then back-dated by the sandbox's measured wall time.
+- **Muse timing (replay).** Muse's event timestamps are not wall-clock, so replay spaces Muse's steps evenly across each repair's recorded duration. Every other time comes from the logs.
+- **Token counts.** They arrive per Muse run, not per step, because that is where Muse reports usage.
+
+The screenshots are rich's SVG export of the same frames, rasterised with headless Chrome (`scripts/watch_frames.py`).
+
+**Live check, Oct 31.** Two fleet-telemetry-v1 runs were started with `--no-review --no-pr`: `20261031-031713-183ce8` with `--follow` and `20261031-031954-a01ab1` without.
+- **The watcher matched its own run exactly.** Its final frame (`docs/runs/20261031-031713-183ce8.watch-final.txt`) agreed with the run's console log: 36 model steps (26 + 10), 63 tool calls, verify 20/20 agent and 8/8 hold-outs, $0.5694 against $0.5693, 2:37 against 157 s. A replay of the same run from its logs shows the same counts.
+- **The two runs did not match each other.** The run without `--follow` verified in one iteration and 28 steps, with 21/21 agent and 8/8 hold-outs. The `--follow` run's first iteration failed the health-range hold-out (7/8), and it needed a second.
+- **What this does and doesn't show.** Muse is not deterministic from run to run (PR #4 and PR #5 differ the same way), so one pair of runs cannot show that `--follow` changes nothing. What can be said is that the watcher is a separate process that only reads files.
+
 ## The benchmark
 
 The demo target is a separate public repo, [ddavarma/fleet-telemetry-v1](https://github.com/ddavarma/fleet-telemetry-v1),
