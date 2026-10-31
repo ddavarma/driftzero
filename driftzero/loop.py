@@ -60,6 +60,7 @@ class LoopResult:
     review: object | None = None    # reviewer.ReviewOutcome, set after the PR is opened (latest pass)
     review_fix: dict | None = None  # the --review-fix pass: first review's findings, responses, commits, outcome
     settings: dict = field(default_factory=dict)  # holdout, local, dry_run, contributor, model, effort, max_steps
+    error: str | None = None  # the run ended without a verdict: Muse failed or made no changes
 
 
 def _head(text: str, n: int = FAILURE_HEAD_LINES) -> str:
@@ -210,7 +211,7 @@ def repair_until_verified(
     passed = False
     total = Cost()
     steps = 0
-    answer = guard = vres = None
+    answer = guard = vres = error = None
     for n in range(1, max_iterations + 1):
         record, run, cost, diff, guard, vres = run_iteration(
             wt, spec, br, n, max_iterations, prior_failure=prior_failure, runs=runs, task_id=task_id,
@@ -224,6 +225,9 @@ def repair_until_verified(
         log("iteration", **record)
         if passed:
             break
+        if record.get("error"):
+            error = record["error"]  # retrying the same failure would only repeat it
+            break
         if not guard.ok:
             prior_failure = guard.retry_message()
         elif vres is not None:
@@ -233,9 +237,9 @@ def repair_until_verified(
     if diff_cost:
         total = total + diff_cost
     log("end", passed=passed, iterations=len(iterations), cost=total.as_dict(), wall_time_s=wall,
-        diff_cost=diff_cost.as_dict() if diff_cost else None)
+        diff_cost=diff_cost.as_dict() if diff_cost else None, error=error)
     on_line(f"{'VERIFIED' if passed else 'NOT VERIFIED'} after {len(iterations)} iteration(s), "
-            f"${total.usd or 0:.4f}, {wall:.0f}s; log {log_path}")
+            f"${total.usd or 0:.4f}, {wall:.0f}s; log {log_path}" + (f"\nERROR: {error}" if error else ""))
     return LoopResult(task_id=task_id, worktree=wt, spec=spec, blast_radius=br, passed=passed, iterations=iterations,
                       log_path=log_path, cost=total, wall_time_s=wall, model=model, steps=steps, answer=answer,
                       guard=guard, verify=vres, hidden_holdout_files=hidden, ended_at=time.time(),
@@ -243,7 +247,28 @@ def repair_until_verified(
                       settings={"holdout": str(holdout) if holdout else None, "local": local, "dry_run": dry_run,
                                 "python": python, "holdout_name": cfg.holdout_name,
                                 "holdout_requirements": cfg.holdout_requirements, "repair_rules": cfg.repair_rules,
-                                "contributor": contributor, "model": model, "effort": effort, "max_steps": max_steps})
+                                "contributor": contributor, "model": model, "effort": effort, "max_steps": max_steps},
+                      error=error)
+
+
+def repair_error(run, diff, dry_run: bool) -> str | None:
+    """Why a repair cannot go on to guard/verify, or None. A dry run (echo provider) never edits, so an empty
+    diff is expected there."""
+    if not run.ok:
+        try:
+            tail = " | ".join(run.stderr_path.read_text(errors="replace").strip().splitlines()[-3:])
+        except OSError:
+            tail = ""
+        return (f"Muse did not complete (exit {run.exit_code}, terminal {run.terminal or 'none'}, "
+                f"{run.steps} model steps)" + (f": {tail}" if tail else ""))
+    if not diff.files and not dry_run:
+        return f"Muse completed but changed nothing ({run.steps} model steps)"
+    return None
+
+
+def _repair_record(run) -> dict:
+    return {"terminal": run.terminal, "exit_code": run.exit_code, "steps": run.steps, "tool_calls": len(run.commands),
+            "duration_s": run.duration_s, "answer": run.answer.model_dump() if run.answer else None}
 
 
 def run_iteration(wt, spec, br, n: int, of: int, *, prior_failure: str | None, runs: Path, task_id: str,
@@ -265,6 +290,16 @@ def run_iteration(wt, spec, br, n: int, of: int, *, prior_failure: str | None, r
     diff = repair_mod.collect_diff(wt)
     (runs / f"{task_id}.i{n}.diff").write_text(diff.patch)
 
+    error = repair_error(run, diff, dry_run)
+    if error:
+        on_line(f"=== {label}: REPAIR FAILED: {error}; not running guard or verify")
+        record = {"iteration": n, "kind": kind, "error": error, "repair": _repair_record(run),
+                  "cost": {**cost.as_dict(), "provider": "echo" if dry_run else "meta",
+                           "model": None if dry_run else model, "contributor": contributor},
+                  "diff": {"files": len(diff.files), "added": diff.added, "deleted": diff.deleted},
+                  "guard": None, "verify": None, "wall_time_s": round(time.monotonic() - it_start, 1), "passed": False}
+        return record, run, cost, diff, None, None
+
     on_line(f"=== {label}: guard")
     guard = guard_check(wt, diff, target_dependency=spec.target_dependency.name if spec.target_dependency else None)
     on_line(f"guard {'ok' if guard.ok else 'REJECTED'}: {len(guard.rejections)} rejection(s), "
@@ -284,9 +319,7 @@ def run_iteration(wt, spec, br, n: int, of: int, *, prior_failure: str | None, r
     record = {
         "iteration": n,
         "kind": kind,
-        "repair": {"terminal": run.terminal, "exit_code": run.exit_code, "steps": run.steps,
-                   "tool_calls": len(run.commands), "duration_s": run.duration_s,
-                   "answer": run.answer.model_dump() if run.answer else None},
+        "repair": _repair_record(run),
         "cost": {**cost.as_dict(), "provider": "echo" if dry_run else "meta", "model": None if dry_run else model,
                  "contributor": contributor},
         "diff": {"files": len(diff.files), "added": diff.added, "deleted": diff.deleted},

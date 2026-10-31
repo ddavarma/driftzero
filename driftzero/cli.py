@@ -103,6 +103,10 @@ def migrate(
             spec_obj.dump(spec)
     res = loop_mod.repair_until_verified(repo, spec, max_iterations, local=local, contributor=contributor,
                                          diff_info=diff_info, command=command)
+    if res.error:
+        typer.echo(f"repair failed, run stopped before verify: {res.error}; worktree kept at {res.worktree.path}",
+                   err=True)
+        raise typer.Exit(1)
     if not res.passed:
         typer.echo(f"not verified after {len(res.iterations)} iteration(s); worktree kept at {res.worktree.path}")
         raise typer.Exit(1)

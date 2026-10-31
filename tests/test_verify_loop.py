@@ -144,3 +144,40 @@ def test_modal_verify_matches_local(wt):
     assert res.backend == "modal" and res.sandbox_id
     assert res.setup["exit_code"] == 0
     assert (res.agent.passed_count, res.holdout.passed_count) == (21, 8) and res.passed
+
+
+# ---------------------------------------------------------------- failed / empty repairs end the run (wolverine run 1)
+
+
+def _fake_muse(exit_code, terminal, edit=None):
+    def run_muse(wt, prompt, *, run_id, **kw):
+        if edit:
+            edit(wt)
+        stderr = wt.runs_dir / f"{run_id}.stderr.log"
+        stderr.write_text("session worktree source proof filesystem operation failed\n" if exit_code else "")
+        return repair.MuseRun(run_id=run_id, exit_code=exit_code, terminal=terminal, terminal_reason=None,
+                              final_text=None, answer=None, steps=0 if exit_code else 3, commands=[], failures=[],
+                              usage=None, tokens={}, duration_s=0.1, events_path=stderr, stderr_path=stderr, argv=[])
+    return run_muse
+
+
+@pytest.mark.parametrize("exit_code, terminal, needle", [
+    (1, None, "Muse did not complete (exit 1, terminal none, 0 model steps): session worktree source proof"),
+    (0, "completed", "Muse completed but changed nothing (3 model steps)"),
+])
+def test_failed_or_empty_repair_ends_run_without_verify(repo, monkeypatch, exit_code, terminal, needle):
+    monkeypatch.setattr(repair, "run_muse", _fake_muse(exit_code, terminal))
+    monkeypatch.setattr(verify, "verify", lambda *a, **k: pytest.fail("verify must not run"))
+    lines = []
+    res = loop.repair_until_verified(repo / BENCH_REL, SPEC_PATH, max_iterations=3, local=True, repair_env=False,
+                                     on_line=lines.append)
+    try:
+        assert not res.passed and len(res.iterations) == 1  # no retries on the same broken repair
+        assert res.error and needle in res.error
+        it = res.iterations[0]
+        assert it["error"] == res.error and it["guard"] is None and it["verify"] is None
+        assert any("REPAIR FAILED" in ln and needle in ln for ln in lines)
+        events = [json.loads(line) for line in res.log_path.read_text().splitlines()]
+        assert events[-1]["event"] == "end" and events[-1]["error"] == res.error
+    finally:
+        repair.remove_worktree(res.worktree)

@@ -301,3 +301,12 @@ def test_severity_floor_override():
     assert pr.fix_candidates(out, 0.3) == []
     assert pr.fix_candidates(out, 0.3, "low") == [low]  # policy-required stays excluded
     assert pr.fix_candidates(out, 0.5, "low") == []
+
+
+def test_body_renders_an_errored_review_fix_iteration(verified):
+    res, _ = verified
+    res.iterations.append({"iteration": 2, "kind": "review_fix", "error": "Muse did not complete (exit 1, terminal none, "
+                           "0 model steps)", "repair": {"duration_s": 0.1, "steps": 0}, "guard": None, "verify": None,
+                           "passed": False, "wall_time_s": 0.1})
+    findings = pr.render_body(res).split("## Review findings")[1].split("## API change")[0]
+    assert "| repair | failed | iteration 2 | – | Muse did not complete (exit 1, terminal none, 0 model steps) |" in findings

@@ -154,7 +154,9 @@ def _findings(res: LoopResult) -> list[str]:
         detail = f.message if f.rule != "loosened" else f"{f.message}: {_code(f.old)} → {_code(f.new)}"
         rows.append(f"| guard (static) | – | {labels[f.rule]} | {_code(where)} | {_md(detail)} |")
     for it in res.iterations:
-        if not it["guard"]["ok"]:
+        if it.get("error"):
+            rows.append(f"| repair | failed | iteration {it['iteration']} | – | {_md(it['error'])} |")
+        elif not it["guard"]["ok"]:
             reasons = "; ".join(r["message"] for r in it["guard"]["rejections"])
             rows.append(f"| guard (static) | rejected | iteration {it['iteration']} | – | {_md(reasons)} |")
     rv = res.review
@@ -620,7 +622,7 @@ def apply_review_fix(res: LoopResult, pr_url: str, first, *, provider: str = "ba
             "min_confidence": min_confidence, "min_severity": min_severity,
             "responses": [r.model_dump() for r in (answer.reviewer_responses if answer else [])],
             "iteration": rec["iteration"], "verified": rec["passed"], "reverted": rec["reverted"],
-            "guard_ok": rec["guard"]["ok"], "verify": rec["verify"], "prev_commit": prev, "commit": None,
+            "guard_ok": rec["guard"]["ok"] if rec["guard"] else None, "error": rec.get("error"), "verify": rec["verify"], "prev_commit": prev, "commit": None,
             "hunks": {}, "second_review": None}
     info["no_change"] = rec["passed"] and not _git(wt.path, "status", "--porcelain")
     if info["no_change"]:
