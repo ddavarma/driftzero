@@ -340,7 +340,7 @@ def _verify_section(res: LoopResult) -> list[str]:
         f"| agent's test suite (`tests/`) | **{a.passed_count}/{a.tests}** passed, exit {a.exit_code} |",
         f"| hold-out contract tests (never shown to the agent) | **{h.passed_count}/{h.tests}** passed, exit {h.exit_code} |",
         f"| sandbox | {'Modal ' + _code(v.sandbox_id) if v.backend == 'modal' else 'local (--local)'}, "
-        f"debian_slim py3.11, `pip install -e` exit {v.setup.get('exit_code')} |",
+        f"debian_slim py3.11, dependency install exit {v.setup.get('exit_code')} |",
         f"| sandbox wall time | {v.wall_time_s:.1f} s |",
         f"| repair iterations | {len(res.iterations)} |",
     ]
@@ -516,7 +516,8 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
 
 def commit_and_push(res: LoopResult, message: str | None = None) -> tuple[str, bool]:
     wt = res.worktree
-    _git(wt.path, "add", "-A")  # hidden hold-outs are skip-worktree, so they stay out of the commit
+    # hidden hold-outs are skip-worktree, so they stay out of the commit; so do interpreter caches
+    _git(wt.path, "add", "-A", "--", ".", *repair_mod.CACHE_EXCLUDES)
     msg = message or (f"{title(res)}\n\n" + (res.answer.summary if res.answer else "") +
                       f"\n\nRepaired by Muse Code ({res.model}); verified: " +
                       (res.verify.summary() if res.verify else "n/a") + f"\nDriftZero-Task: {res.task_id}\n")

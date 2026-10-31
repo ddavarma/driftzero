@@ -116,7 +116,9 @@ def build_prior_failure(result: verify_mod.VerifyResult, holdout_name: str | Non
         parts += [f"### Your test suite: exit {a.exit_code}, {a.passed_count}/{a.tests} passed",
                   _head(a.stdout + a.stderr), ""]
     if result.setup.get("exit_code"):
-        parts += ["### `pip install -e .` failed", result.setup.get("output", ""), ""]
+        failed = next((st["command"] for st in result.setup.get("steps", []) if st["exit_code"]), None)
+        label = f"`{' '.join(failed)}`" if failed else "dependency install"
+        parts += [f"### Dependency install failed: {label}", result.setup.get("output", ""), ""]
     return "\n".join(parts)
 
 

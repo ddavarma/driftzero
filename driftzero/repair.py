@@ -521,10 +521,15 @@ class RepairDiff:
         return sum(d for _, _, d in self.files if d > 0)
 
 
+# Interpreter caches written when tests run in the worktree. Targets whose .gitignore does not cover them
+# (wolverine's doesn't) would otherwise get .pyc files in the diff, the guard and the PR commit.
+CACHE_EXCLUDES = (":(exclude,glob)**/__pycache__/**", ":(exclude,glob)**/*.py[co]")
+
+
 def collect_diff(worktree: Worktree) -> RepairDiff:
     """Everything that differs from the base commit: commits on the branch plus uncommitted and new files."""
     # Intent-to-add makes untracked (non-ignored) files show up in `git diff <base>` without staging content.
-    _git(worktree.path, "add", "--intent-to-add", "--all")
+    _git(worktree.path, "add", "--intent-to-add", "--all", "--", ".", *CACHE_EXCLUDES)
     patch = _git(worktree.path, "diff", worktree.base)
     stat = _git(worktree.path, "diff", "--stat", worktree.base)
     files = []

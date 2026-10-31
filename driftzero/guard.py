@@ -483,15 +483,17 @@ def check_changes(changes: list[FileChange], target_dependency: str | None = Non
 # --------------------------------------------------------------------------- git glue
 
 def _git_show(cwd: Path, rev: str, path: str) -> str | None:
-    p = subprocess.run(["git", "show", f"{rev}:{path}"], cwd=cwd, capture_output=True, text=True)
-    return p.stdout if p.returncode == 0 else None
+    p = subprocess.run(["git", "show", f"{rev}:{path}"], cwd=cwd, capture_output=True)
+    return p.stdout.decode("utf-8", errors="replace") if p.returncode == 0 else None
 
 
 def changes_from_worktree(wt_path: Path, base: str, paths: list[str]) -> list[FileChange]:
+    # Non-UTF-8 (binary) files are decoded with replacement: only .py files are parsed, and the rest must not crash.
     out = []
     for path in paths:
         f = wt_path / path
-        out.append(FileChange(path, _git_show(wt_path, base, path), f.read_text() if f.exists() else None))
+        after = f.read_bytes().decode("utf-8", errors="replace") if f.exists() else None
+        out.append(FileChange(path, _git_show(wt_path, base, path), after))
     return out
 
 

@@ -126,6 +126,17 @@ def test_collection_errors_scrubbed_into_retry_prompt():
         assert leak not in text, leak
 
 
+
+def test_retry_prompt_names_the_install_step_that_failed():
+    cmd = ["python", "-m", "pip", "install", "-r", "requirements.txt", "openai<2,>=1"]
+    h = verify.SuiteResult(name="holdout", command=[], exit_code=2, stdout="", stderr="", junit_xml=None)
+    res = verify.VerifyResult(passed=False, backend="modal", project_rel=".", agent=h, holdout=h, wall_time_s=1,
+                              setup={"exit_code": 1, "output": "ResolutionImpossible", "command": [cmd],
+                                     "steps": [{"command": cmd, "exit_code": 1, "output": "ResolutionImpossible"}]})
+    text = loop.build_prior_failure(res, "holdout_v2")
+    assert "### Dependency install failed: `python -m pip install -r requirements.txt openai<2,>=1`" in text
+    assert "ResolutionImpossible" in text and "pip install -e ." not in text
+
 # ---------------------------------------------------------------- (4) guard: dependency stubbing in library code
 
 
@@ -228,3 +239,32 @@ def test_validated_against_compares_requirements_not_strings():
     assert loop.same_requirement("OpenAI>=1,<2", "openai >=1, <2")
     assert not loop.same_requirement("openai>=1,<2", "openai>=1")
     assert not loop.same_requirement("openai>=1,<2", "httpx>=1,<2")
+
+
+# ---------------------------------------------------------------- caches and binary files in the worktree (wolverine)
+
+
+def test_caches_excluded_from_diff_and_guard_survives_binary_files(tmp_path):
+    import subprocess
+
+    def git(*args):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=root, check=True,
+                       capture_output=True)
+
+    root = write(tmp_path / "r", {".gitignore": "venv\n", "pkg/mod.py": "x = 1\n", "tests/test_m.py": "def test_m():\n    assert True\n"})
+    git("init", "-q", "-b", "main")
+    git("add", "-A")
+    git("commit", "-q", "-m", "init")
+    wt = repair.create_worktree(root, "c")
+    try:
+        (wt.path / "pkg" / "mod.py").write_text("x = 2\n")
+        for rel in ("pkg/__pycache__/mod.cpython-311.pyc", "tests/__pycache__/test_m.cpython-311-pytest-7.3.1.pyc"):
+            (wt.path / rel).parent.mkdir(parents=True)
+            (wt.path / rel).write_bytes(b"\xa7\r\r\n\x00binary")
+        (wt.path / "pkg" / "blob.bin").write_bytes(b"\xa7\x00\xff")
+        diff = repair.collect_diff(wt)
+        assert {p for p, _, _ in diff.files} == {"pkg/mod.py", "pkg/blob.bin"}
+        res = guard.guard_check(wt, diff)  # used to raise UnicodeDecodeError on the binary file
+        assert res.ok
+    finally:
+        repair.remove_worktree(wt)
