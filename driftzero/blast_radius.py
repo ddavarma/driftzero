@@ -48,7 +48,7 @@ SymbolKind = Literal["function", "method", "class", "constant", "fixture", "test
 
 class Match(BaseModel):
     probe: str  # e.g. "removed:TelemetryFrame.noise"
-    kind: str   # subscript | get | attribute | keyword | field_def | dict_key | endpoint | literal
+    kind: str   # subscript | get | attribute | attribute_chain | keyword | field_def | dict_key | endpoint | literal | dotted_string
     line: int
     text: str   # the key / attribute / literal that matched
 
@@ -109,6 +109,12 @@ def _template_re(template: str) -> re.Pattern[str]:
 DOTTED_RE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
 
 
+def _call_path(path: str) -> str | None:
+    """'openai.ChatCompletion.create()' -> 'openai.ChatCompletion.create'; None for URL paths and bare names."""
+    p = path.strip().removesuffix("()")
+    return p if "/" not in p and DOTTED_RE.fullmatch(p) else None
+
+
 class _Probes:
     """What to look for in code, derived from the DriftSpec."""
 
@@ -132,16 +138,23 @@ class _Probes:
             self.by_leaf[_leaf(v.path)].append(pid)
             self.by_literal[v.old].append(pid)
             self.value_old[pid] = v.old
+        # SDK call paths (no slash), e.g. "openai.ChatCompletion.create()": matched as attribute chains in code
+        # and as dotted strings (mock.patch targets), not as URL templates.
+        self.chains: dict[str, list[str]] = defaultdict(list)
         for e in spec.endpoints_renamed:
-            self.endpoints.append((f"endpoint:{e.method} {e.old}", _template_re(e.old), e.old,
-                                   _template_re(e.new), e.new))
+            pid = f"endpoint:{e.method} {e.old}"
+            chain = _call_path(e.old)
+            if chain:
+                self.chains[chain].append(pid)
+            else:
+                self.endpoints.append((pid, _template_re(e.old), e.old, _template_re(e.new), e.new))
 
     def dotted_hits(self, s: str) -> list[str]:
         """A dotted-path string naming a changed API element, e.g. patch("openai.Model.list") or
         "openai.Model.list.something" for a removed/renamed `openai` schema entry `Model.list`."""
         if not DOTTED_RE.fullmatch(s):
             return []
-        hits = []
+        hits = list(self.chains.get(s, []))
         for key, pids in self.by_dotted.items():
             if s == key or s.startswith(key + "."):
                 hits += pids
@@ -428,6 +441,19 @@ def _symbol_roots(sym: _Symbol) -> tuple[list[ast.AST], list[ast.Name]]:
     return ([value] if value is not None else []), []
 
 
+def _attr_chain(mod: _Module, node: ast.Attribute, local: set[str]) -> str | None:
+    """`oa.Model.list` -> 'openai.Model.list' through the module's imports; None unless rooted in an import."""
+    parts = []
+    x: ast.AST = node
+    while isinstance(x, ast.Attribute):
+        parts.append(x.attr)
+        x = x.value
+    if not isinstance(x, ast.Name) or x.id in local or x.id not in mod.imports:
+        return None
+    base, attr, _ = mod.imports[x.id]
+    return ".".join([base, *([attr] if attr else []), *reversed(parts)])
+
+
 def _scan_symbol(idx: _Index, sym: _Symbol, probes: _Probes, data_files: dict[str, list[str]]
                  ) -> tuple[list[Match], list[Edge]]:
     mod = idx.modules[sym.file]
@@ -459,6 +485,10 @@ def _scan_symbol(idx: _Index, sym: _Symbol, probes: _Probes, data_files: dict[st
         if (isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr in GETTERS
                 and x.args and isinstance(x.args[0], ast.Constant) and isinstance(x.args[0].value, str)):
             leaf_hit(x.args[0].value, "get", line)
+        if isinstance(x, ast.Attribute) and probes.chains:
+            chain = _attr_chain(mod, x, local)
+            for pid in probes.chains.get(chain or "", []):
+                matches.append(Match(probe=pid, kind="attribute_chain", line=line, text=chain))
         if isinstance(x, ast.Attribute):
             res = idx.resolve_chain(mod, x, local)
             if res and res[0] == "sym":
@@ -594,6 +624,7 @@ def analyze(repo: str | Path, spec: DriftSpec) -> BlastRadius:
 _EVIDENCE = {
     "subscript": '["{}"]', "get": '.get("{}")', "attribute": ".{}", "keyword": "{}=",
     "field_def": "{}: …", "dict_key": '{{"{}": …}}', "endpoint": '"{}"', "literal": '"{}"', "dotted_string": '"{}"',
+    "attribute_chain": "{}",
 }
 
 

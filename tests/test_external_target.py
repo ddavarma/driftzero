@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from driftzero import blast_radius, differ, env, guard, loop, repair, target, verify
-from driftzero.spec import DriftSpec, FieldRenamed, TargetDependency
+from driftzero.spec import DriftSpec, EndpointRename, FieldRenamed, TargetDependency
 
 ROOT = Path(__file__).resolve().parents[1]
 FLEET = ROOT / "benchmarks" / "robotics_telemetry_drift"
@@ -268,3 +268,72 @@ def test_caches_excluded_from_diff_and_guard_survives_binary_files(tmp_path):
         assert res.ok
     finally:
         repair.remove_worktree(wt)
+
+
+# ---------------------------------------------------------------- blast radius: SDK call paths as attribute chains (wolverine)
+
+
+SDK_SPEC = DriftSpec(api="openai", from_version="v0", to_version="v1", endpoints_renamed=[
+    EndpointRename(method="create", old="openai.ChatCompletion.create()", new="client.chat.completions.create()"),
+    EndpointRename(method="list", old="openai.Model.list()", new="client.models.list()"),
+    EndpointRename(method="GET", old="/v1/engines", new="/v1/models"),
+])
+
+
+def test_blast_radius_matches_dotted_endpoint_paths_as_attribute_chains(tmp_path):
+    repo = write(tmp_path / "r", {
+        "pkg/__init__.py": "",
+        "pkg/core.py": """\
+            import openai
+            import openai as oa
+            from openai import ChatCompletion
+
+            def ask(messages):
+                return openai.ChatCompletion.create(model="gpt-4", messages=messages)
+
+            def models():
+                return [x["id"] for x in openai.Model.list()["data"]]
+
+            def aliased():
+                return oa.Model.list()
+
+            def imported_name():
+                return ChatCompletion.create(model="m")
+
+            def already_v1(client):
+                return client.chat.completions.create(model="m")
+
+            def lookalike():
+                return openai.ChatCompletionX.create()
+            """,
+        "pkg/cli.py": "from pkg.core import ask\n\ndef main():\n    return ask([])\n",
+        "tests/test_core.py": """\
+            from unittest.mock import patch
+            from pkg import core
+
+            def test_ask(mocker):
+                mocker.patch("openai.ChatCompletion.create", return_value=None)
+                assert core.ask([]) is None
+
+            @patch("openai.Model.list")
+            def test_models(m):
+                m.return_value = {"data": []}
+                assert core.models() == []
+
+            def test_unrelated():
+                assert "openai.ChatCompletion.created" != "x"
+            """,
+    })
+    br = blast_radius.analyze(repo, SDK_SPEC)
+    direct = {s.id: {m.kind for m in s.matches} for s in br.symbols if s.direct}
+    assert direct["pkg/core.py::ask"] == {"attribute_chain"}
+    assert set(direct) >= {"pkg/core.py::models", "pkg/core.py::aliased", "pkg/core.py::imported_name"}
+    assert "pkg/core.py::already_v1" not in direct and "pkg/core.py::lookalike" not in direct
+    assert direct["tests/test_core.py::test_ask"] >= {"dotted_string"}  # the mocker.patch string
+    assert direct["tests/test_core.py::test_models"] >= {"dotted_string"}  # the @patch decorator string
+    assert "tests/test_core.py::test_unrelated" not in br.tests
+    assert br.symbol("pkg/cli.py::main") is not None  # reached through ask
+    assert {"tests/test_core.py::test_ask", "tests/test_core.py::test_models"} <= set(br.tests)
+    chain = next(m for m in br.symbol("pkg/core.py::ask").matches)
+    assert chain.probe == "endpoint:create openai.ChatCompletion.create()" and chain.text == "openai.ChatCompletion.create"
+    assert "openai.ChatCompletion.create" in blast_radius.evidence(br.symbol("pkg/core.py::ask"))
