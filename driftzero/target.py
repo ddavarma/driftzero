@@ -68,6 +68,7 @@ class TargetConfig:
     holdout_requirements: list[str] = field(default_factory=list)  # pip requirements of the hold-outs themselves
     validated_against: str | None = None     # target-dependency pin the hold-outs were validated against
     repair_rules: list[str] = field(default_factory=list)  # target-specific hard rules for the repair prompt
+    holdout_description: str | None = None   # what the hold-outs are derived from, for the PR body
 
 
 def config_for(target: Target, home: Path, targets_file: Path = TARGETS_FILE) -> TargetConfig:
@@ -87,7 +88,8 @@ def config_for(target: Target, home: Path, targets_file: Path = TARGETS_FILE) ->
     return TargetConfig(holdout=holdout, holdout_name=entry.get("holdout_name") or (holdout.name if holdout else None),
                         holdout_requirements=list(entry.get("holdout_requirements") or []),
                         validated_against=entry.get("validated_against"),
-                        repair_rules=list(entry.get("repair_rules") or []))
+                        repair_rules=list(entry.get("repair_rules") or []),
+                        holdout_description=entry.get("holdout_description"))
 
 
 def home_dir() -> Path:

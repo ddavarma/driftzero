@@ -350,10 +350,18 @@ def _verify_section(res: LoopResult) -> list[str]:
     cases = h.cases()
     if cases:
         icon = {"passed": "✅", "failed": "❌", "error": "❌", "skipped": "⏭️"}
-        out += ["", "Hold-out tests (derived only from `openapi_v2.json` and the changelog; run with "
-                "`--noconftest -c /dev/null`):", ""]
+        out += ["", holdout_heading(res.settings), ""]
         out += [f"- {icon.get(st, '?')} `{name}` {st}" for name, st in cases]
     return out
+
+
+def holdout_heading(settings: dict) -> str:
+    """Describes the hold-outs from the target's benchmarks/targets.json entry (carried in the run's settings)."""
+    parts = [settings["holdout_description"]] if settings.get("holdout_description") else []
+    if settings.get("validated_against"):
+        parts.append(f"validated against `{settings['validated_against']}`")
+    parts.append("run with `--noconftest -c /dev/null`")
+    return f"Hold-out tests ({'; '.join(parts)}):"
 
 
 def _cost_section(res: LoopResult) -> list[str]:
@@ -455,6 +463,21 @@ def render_body(res: LoopResult, *, pr_s: float | None = None, spec_path: str | 
 
 # --------------------------------------------------------------------------- rebuild a finished run
 
+def run_context(spec: DriftSpec, start: dict, events: list[dict], root: Path) -> tuple[DriftSpec, dict]:
+    """For re-rendering a saved run with current rules: a differ-produced spec gets its version labels from the
+    target dependency (runs before that rule kept the model's labels), and the hold-out description comes from
+    the target's benchmarks/targets.json entry."""
+    from driftzero import differ
+    from driftzero import target as target_mod
+
+    if any(e["event"] == "diff" for e in events) and spec.target_dependency is not None:
+        spec, _ = differ.resolve_versions(spec, None, None)
+    repo = Path(start.get("source_root") or start.get("repo") or root)
+    cfg = target_mod.config_for(target_mod.Target(path=repo, slug=start.get("target_slug")), root)
+    return spec, {"holdout_description": cfg.holdout_description,
+                  "validated_against": start.get("validated_against") or cfg.validated_against}
+
+
 def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
     """Rebuild a LoopResult from .driftzero/runs/<id>.* and its kept worktree (no model calls).
 
@@ -471,7 +494,7 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
     if not spec_path:
         found = sorted(repo.glob("driftspec*.json"))
         spec_path = str(found[0]) if len(found) == 1 else None
-    spec = DriftSpec.load(spec_path)
+    spec, context = run_context(DriftSpec.load(spec_path), start, events, root)
     source_root = Path(start.get("source_root") or root)
     wt = repair_mod.Worktree(root=source_root, path=Path(start["worktree"]), branch=start["branch"], base=start["base"],
                              project_rel=os.path.relpath(repo if not start.get("target_url") else source_root,
@@ -509,7 +532,7 @@ def load_run(root: Path, task_id: str) -> tuple[LoopResult, str | None]:
 
         policy_filter(res.review.result.findings, res.spec)
     res.review_fix = next((e for e in reversed(events) if e["event"] == "review_fix"), None)
-    res.settings = {k: start.get(k) for k in ("holdout", "local", "dry_run", "contributor", "model")}
+    res.settings = {**{k: start.get(k) for k in ("holdout", "local", "dry_run", "contributor", "model")}, **context}
     if res.review is not None and res.review.cost.usd is not None:
         res.cost = res.cost + res.review.cost
     return res, spec_path

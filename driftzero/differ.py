@@ -320,7 +320,9 @@ def merge(skel: DriftSpec, model_spec: DriftSpec) -> tuple[DriftSpec, list[str],
     if model_spec.target_dependency is not None and model_spec.target_dependency.constraint.strip():
         out.target_dependency = model_spec.target_dependency.model_copy(update={"source": "changelog"})
     if skel.api == "unknown API":
-        out.api, out.from_version, out.to_version = model_spec.api, model_spec.from_version, model_spec.to_version
+        # No OpenAPI documents: the model names the API, but version labels never come from it (wolverine run 4
+        # labelled openai 0.x -> 1.x as "v1 -> v2"); resolve_versions fills them from the CLI or --target-dep.
+        out.api, out.from_version, out.to_version = model_spec.api, "", ""
     added, restored = [], []
     for cat in CATEGORIES:
         mine = getattr(out, cat)
@@ -390,6 +392,50 @@ def parse_target_dep(text: str):
     if not constraint:
         raise ValueError(f"--target-dep needs a version constraint, got {text!r}")
     return TargetDependency(name=req.name, constraint=constraint, source="cli")
+
+
+def versions_from_requirement(requirement: str) -> tuple[str | None, str | None]:
+    """Version labels implied by a target pin: "openai>=1,<2" -> ("<1", "1.x"); (None, None) without a lower bound."""
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
+    lower = op = None
+    uppers = []
+    for s in Requirement(requirement).specifier:
+        if s.operator in (">=", "==", "~=", ">"):
+            lower, op = s.version, s.operator
+        elif s.operator in ("<", "<="):
+            uppers.append(Version(s.version))
+    if lower is None:
+        return None, None
+    major = Version(lower).major
+    if op == "~=":  # ~=1.4 means >=1.4,<2; ~=1.4.2 means >=1.4.2,<1.5
+        rel = Version(lower).release
+        uppers.append(Version(".".join(map(str, (*rel[:-2], rel[-2] + 1)))))
+    if op == "==":
+        return f"<{lower}", lower
+    if uppers and min(uppers) <= Version(f"{major + 1}"):
+        return f"<{lower}", f"{major}.x"
+    return f"<{lower}", f">={lower}"
+
+
+def resolve_versions(spec: DriftSpec, from_cli: str | None, to_cli: str | None) -> tuple[DriftSpec, str]:
+    """Version labels from --from-version/--to-version, else derived from the target dependency, else the
+    spec's own (OpenAPI version tags or a hand-written spec). Never from the differ's model."""
+    derived = versions_from_requirement(spec.target_dependency.requirement) if spec.target_dependency else (None, None)
+    frm = from_cli or derived[0] or spec.from_version
+    to = to_cli or derived[1] or spec.to_version
+    if not (frm and to):
+        raise ValueError("no version labels: the changelog alone does not set them; pass --from-version/--to-version "
+                         "or --target-dep")
+    sources = []
+    if from_cli or to_cli:
+        sources.append(" and ".join(f for f, v in (("--from-version", from_cli), ("--to-version", to_cli)) if v))
+    if any(d and not c for d, c in ((derived[0], from_cli), (derived[1], to_cli))):
+        sources.append("the target dependency")
+    if (not from_cli and not derived[0]) or (not to_cli and not derived[1]):
+        sources.append("the spec")
+    return spec.model_copy(update={"from_version": frm, "to_version": to}), ", ".join(sources)
 
 
 def resolve_target_dependency(spec: DriftSpec, cli: str | None) -> DriftSpec:

@@ -30,6 +30,9 @@ def migrate(
     openapi_v2: Path = typer.Option(None, "--openapi-v2", exists=True, dir_okay=False, help="New OpenAPI document."),
     target_dep: str = typer.Option(None, "--target-dep", help='Upgraded package + constraint, e.g. "openai>=1,<2"; '
                                    "used when the changelog does not state one."),
+    from_version: str = typer.Option(None, "--from-version", help="Version label of the old API (default: derived "
+                                     "from --target-dep, or the OpenAPI documents; never from the differ's model)."),
+    to_version: str = typer.Option(None, "--to-version", help="Version label of the new API (same defaults)."),
     no_pr: bool = typer.Option(False, "--no-pr", help="Push the verified branch but don't open a PR."),
     max_iterations: int = typer.Option(3, help="Repair/verify attempts before giving up."),
     contributor: bool = typer.Option(False, "--contributor", help="Contributor mode (cheaper; Meta trains on it). Dev only."),
@@ -73,12 +76,14 @@ def migrate(
             raise typer.Exit(1)
         try:
             res_d.spec = differ.resolve_target_dependency(res_d.spec, target_dep)
+            res_d.spec, version_source = differ.resolve_versions(res_d.spec, from_version, to_version)
         except ValueError as exc:
             raise typer.BadParameter(str(exc))
         spec = runs / f"diff-{stamp}.driftspec.json"
         res_d.spec.dump(spec)
         td = res_d.spec.target_dependency
         typer.echo(f"target dependency: {td.requirement} (from the {td.source})" if td else "target dependency: none")
+        typer.echo(f"versions: {res_d.spec.from_version} -> {res_d.spec.to_version} (from {version_source})")
         n = sum(len(getattr(res_d.spec, c)) for c in differ.CATEGORIES)
         typer.echo(f"DriftSpec: {n} changes from {len(res_d.candidates)} OpenAPI candidates "
                    f"(+{len(res_d.model_added)} from the changelog, {len(res_d.restored)} restored) -> {spec}")
@@ -91,16 +96,17 @@ def migrate(
                                 "openapi_v1": str(openapi_v1) if openapi_v1 else None,
                                 "openapi_v2": str(openapi_v2) if openapi_v2 else None}}
 
-    if target_dep and diff_info is None:  # --spec given: apply --target-dep to it
+    if (target_dep or from_version or to_version) and diff_info is None:  # --spec given: apply the flags to it
         try:
             spec_obj = differ.resolve_target_dependency(DriftSpec.load(spec), target_dep)
+            spec_obj, version_source = differ.resolve_versions(spec_obj, from_version, to_version)
         except ValueError as exc:
             raise typer.BadParameter(str(exc))
-        if spec_obj.target_dependency is not None:
-            runs = target_mod.home_dir() / ".driftzero" / "runs"
-            runs.mkdir(parents=True, exist_ok=True)
-            spec = runs / f"spec-{time.strftime('%Y%m%d-%H%M%S')}.driftspec.json"
-            spec_obj.dump(spec)
+        typer.echo(f"versions: {spec_obj.from_version} -> {spec_obj.to_version} (from {version_source})")
+        runs = target_mod.home_dir() / ".driftzero" / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        spec = runs / f"spec-{time.strftime('%Y%m%d-%H%M%S')}.driftspec.json"
+        spec_obj.dump(spec)
     res = loop_mod.repair_until_verified(repo, spec, max_iterations, local=local, contributor=contributor,
                                          diff_info=diff_info, command=command)
     if res.error:
@@ -228,6 +234,9 @@ def diff_cmd(
     out: Path = typer.Option(..., help="Where to write the DriftSpec JSON."),
     compare: Path = typer.Option(None, exists=True, dir_okay=False, help="A reference DriftSpec to compare against."),
     target_dep: str = typer.Option(None, "--target-dep", help='e.g. "openai>=1,<2"; used if the changelog states none.'),
+    from_version: str = typer.Option(None, "--from-version", help="Version label of the old API (default: derived "
+                                     "from --target-dep, or the OpenAPI documents; never from the differ's model)."),
+    to_version: str = typer.Option(None, "--to-version", help="Version label of the new API (same defaults)."),
 ) -> None:
     """Changelog / OpenAPI v1 -> v2 into a DriftSpec (deterministic diff + one muse-spark-1.3 merge call)."""
     from driftzero import differ
@@ -235,9 +244,11 @@ def diff_cmd(
     res = differ.diff(changelog, openapi_v1, openapi_v2)
     try:
         res.spec = differ.resolve_target_dependency(res.spec, target_dep)
+        res.spec, version_source = differ.resolve_versions(res.spec, from_version, to_version)
     except ValueError as exc:
         raise typer.BadParameter(str(exc))
     res.spec.dump(out)
+    typer.echo(f"versions: {res.spec.from_version} -> {res.spec.to_version} (from {version_source})")
     td = res.spec.target_dependency
     typer.echo(f"target dependency: {td.requirement} (from the {td.source})" if td else "target dependency: none")
     n = sum(len(getattr(res.spec, c)) for c in differ.CATEGORIES)

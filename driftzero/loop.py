@@ -247,6 +247,8 @@ def repair_until_verified(
                       settings={"holdout": str(holdout) if holdout else None, "local": local, "dry_run": dry_run,
                                 "python": python, "holdout_name": cfg.holdout_name,
                                 "holdout_requirements": cfg.holdout_requirements, "repair_rules": cfg.repair_rules,
+                                "holdout_description": cfg.holdout_description,
+                                "validated_against": cfg.validated_against,
                                 "contributor": contributor, "model": model, "effort": effort, "max_steps": max_steps},
                       error=error)
 

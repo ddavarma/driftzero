@@ -337,3 +337,80 @@ def test_blast_radius_matches_dotted_endpoint_paths_as_attribute_chains(tmp_path
     chain = next(m for m in br.symbol("pkg/core.py::ask").matches)
     assert chain.probe == "endpoint:create openai.ChatCompletion.create()" and chain.text == "openai.ChatCompletion.create"
     assert "openai.ChatCompletion.create" in blast_radius.evidence(br.symbol("pkg/core.py::ask"))
+
+
+# ---------------------------------------------------------------- version labels never come from the differ's model
+
+
+@pytest.mark.parametrize("req, want", [
+    ("openai>=1,<2", ("<1", "1.x")),
+    ("openai<2,>=1.2", ("<1.2", "1.x")),
+    ("pkg~=1.4", ("<1.4", "1.x")),
+    ("pkg>=2", ("<2", ">=2")),
+    ("pkg==3.1", ("<3.1", "3.1")),
+    ("pkg<2", (None, None)),  # no lower bound: nothing to derive
+])
+def test_versions_from_target_dependency(req, want):
+    assert differ.versions_from_requirement(req) == want
+
+
+def test_changelog_only_spec_takes_no_version_labels_from_the_model():
+    skel = differ.skeleton([], None, None)
+    model = DriftSpec(api="openai", from_version="v1", to_version="v2")  # what wolverine run 4's model said
+    merged, _, _ = differ.merge(skel, model)
+    assert merged.api == "openai" and (merged.from_version, merged.to_version) == ("", "")
+    with pytest.raises(ValueError, match="--from-version/--to-version or --target-dep"):
+        differ.resolve_versions(merged, None, None)
+    dep = merged.model_copy(update={"target_dependency": TargetDependency(name="openai", constraint="<2,>=1")})
+    spec, source = differ.resolve_versions(dep, None, None)
+    assert (spec.from_version, spec.to_version, source) == ("<1", "1.x", "the target dependency")
+    spec, source = differ.resolve_versions(dep, "0.27.4", None)
+    assert (spec.from_version, spec.to_version) == ("0.27.4", "1.x") and "--from-version" in source
+    # OpenAPI version tags are deterministic and stay unless overridden
+    fleet = DriftSpec.load(FLEET / "driftspec_v2.json")
+    assert differ.resolve_versions(fleet, None, None)[0].to_version == fleet.to_version
+    assert differ.resolve_versions(fleet, None, "v3")[0].to_version == "v3"
+
+
+def test_pr_holdout_description_comes_from_targets_json():
+    wv = target.config_for(target.Target(path=Path("/x"), slug="ddavarma/wolverine-driftzero-test"), ROOT)
+    fleet = target.config_for(target.Target(path=FLEET.resolve()), ROOT)
+    assert "respx" in wv.holdout_description and "openapi_v2.json" not in wv.holdout_description
+    assert "openapi_v2.json" in fleet.holdout_description
+    from driftzero import pr
+
+    assert pr.holdout_heading({"holdout_description": wv.holdout_description, "validated_against": "openai>=1,<2"}) == (
+        f"Hold-out tests ({wv.holdout_description}; validated against `openai>=1,<2`; run with "
+        "`--noconftest -c /dev/null`):")
+    assert pr.holdout_heading({}) == "Hold-out tests (run with `--noconftest -c /dev/null`):"
+
+
+def test_cli_spec_with_version_flags_writes_labelled_spec(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from driftzero import cli, loop as loop_mod
+
+    seen = {}
+
+    def fake_loop(repo, spec, *a, **k):
+        seen["spec"] = DriftSpec.load(spec)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(loop_mod, "repair_until_verified", fake_loop)
+    monkeypatch.setattr(target, "home_dir", lambda: tmp_path)
+    res = CliRunner().invoke(cli.app, ["migrate", "--repo", str(FLEET), "--spec", str(FLEET / "driftspec_v2.json"),
+                                       "--target-dep", "fleet-telemetry>=2,<3", "--from-version", "1.4"])
+    assert "versions: 1.4 -> 2.x (from --from-version, the target dependency)" in res.output, res.output
+    assert (seen["spec"].from_version, seen["spec"].to_version) == ("1.4", "2.x")
+
+
+def test_rerendering_wolverine_run4_relabels_versions_and_describes_holdouts():
+    from driftzero import pr
+
+    events = [json.loads(line) for line in (ROOT / "docs/runs/20261030-232336-30685b.jsonl").read_text().splitlines()]
+    start = next(e for e in events if e["event"] == "start")
+    spec = DriftSpec.load(ROOT / "docs/runs/20261030-232336-30685b.driftspec.generated.json")
+    assert (spec.from_version, spec.to_version) == ("v1", "v2")  # what the model said
+    fixed, ctx = pr.run_context(spec, start, events, ROOT)
+    assert (fixed.from_version, fixed.to_version) == ("<1", "1.x")
+    assert "respx" in ctx["holdout_description"] and ctx["validated_against"] == "openai>=1,<2"

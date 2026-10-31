@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-target config. Key: GitHub owner/name (remote targets) or the benchmark path (local). holdout: hold-out dir in DriftZero; holdout_name: dir name it gets in the sandbox; holdout_requirements: pip requirements the hold-outs need (installed only in verify); validated_against: the target-dependency pin the hold-outs were validated against; repair_rules: target-specific hard rules appended to the generic ones ({from_version}/{to_version} filled in).",
+  "_comment": "Per-target config. Key: GitHub owner/name (remote targets) or the benchmark path (local). holdout: hold-out dir in DriftZero; holdout_name: dir name it gets in the sandbox; holdout_requirements: pip requirements the hold-outs need (installed only in verify); validated_against: the target-dependency pin the hold-outs were validated against; repair_rules: target-specific hard rules appended to the generic ones ({from_version}/{to_version} filled in). holdout_description: what the hold-outs are derived from (shown in the PR body).",
   "ddavarma/fleet-telemetry-v1": {
     "benchmark": "benchmarks/robotics_telemetry_drift",
     "holdout": "benchmarks/robotics_telemetry_drift/holdout_v2",
@@ -12,7 +12,8 @@
       "Add a **health alert**: carry `health` on the parsed frame and raise an alert of kind `\"health\"` when `health < 0.5` (module constant `MIN_HEALTH = 0.5`, overridable like the other thresholds). This is the only reason an existing test's expected alert set or count may change, and only by *adding* the new health alerts. Add at least one dedicated test for it.",
       "**Negative `qw`**: `q` and `-q` are the same rotation and the server does not canonicalise sign. Never assume `qw >= 0`. Use sign-invariant formulas (rotation matrix from q, `atan2` heading), normalise q defensively, and add a test that a quaternion and its negation give the same heading, tilt and rotation. Robot `amr-03` in the fixture has `qw ≈ -0.99993` with heading 359°.",
       "Uncertainty: derive the scalar position sigma as `sqrt(trace(P_pos) / 3)` where `P_pos = covariance[0:3][0:3]`, so isotropic fixtures keep the same fusion weights and noise alerts as before. Validate the covariance shape (6x6)."
-    ]
+    ],
+    "holdout_description": "derived only from `openapi_v2.json` and `CHANGELOG_v2.md`, through the public API the v1 suite already used"
   },
   "ddavarma/JobTracker-driftzero-test": {
     "benchmark": "benchmarks/jobtracker_openai_v1",
@@ -22,7 +23,8 @@
       "respx>=0.21,<0.23"
     ],
     "validated_against": "openai>=1,<2",
-    "repair_rules": []
+    "repair_rules": [],
+    "holdout_description": "derived from the OpenAI v1.0.0 migration guide and the v1 SDK's public interface, with the API mocked at the HTTP layer by respx"
   },
   "benchmarks/robotics_telemetry_drift": {
     "benchmark": "benchmarks/robotics_telemetry_drift",
@@ -36,7 +38,8 @@
       "Add a **health alert**: carry `health` on the parsed frame and raise an alert of kind `\"health\"` when `health < 0.5` (module constant `MIN_HEALTH = 0.5`, overridable like the other thresholds). This is the only reason an existing test's expected alert set or count may change, and only by *adding* the new health alerts. Add at least one dedicated test for it.",
       "**Negative `qw`**: `q` and `-q` are the same rotation and the server does not canonicalise sign. Never assume `qw >= 0`. Use sign-invariant formulas (rotation matrix from q, `atan2` heading), normalise q defensively, and add a test that a quaternion and its negation give the same heading, tilt and rotation. Robot `amr-03` in the fixture has `qw ≈ -0.99993` with heading 359°.",
       "Uncertainty: derive the scalar position sigma as `sqrt(trace(P_pos) / 3)` where `P_pos = covariance[0:3][0:3]`, so isotropic fixtures keep the same fusion weights and noise alerts as before. Validate the covariance shape (6x6)."
-    ]
+    ],
+    "holdout_description": "derived only from `openapi_v2.json` and `CHANGELOG_v2.md`, through the public API the v1 suite already used"
   },
   "ddavarma/wolverine-driftzero-test": {
     "benchmark": "benchmarks/wolverine_openai_v1",
@@ -48,6 +51,7 @@
     "validated_against": "openai>=1,<2",
     "repair_rules": [
       "Importing `wolverine` must keep working when `OPENAI_API_KEY` is unset (the test suite and `--revert` run without a key); do not construct anything at import time that requires the key."
-    ]
+    ],
+    "holdout_description": "derived from the OpenAI v1.0.0 migration guide and the v1 SDK's public interface, with the API mocked at the HTTP layer by respx"
   }
 }
