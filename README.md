@@ -1,5 +1,7 @@
 # DriftZero
 
+Demo video: https://youtu.be/T0MphV95epY
+
 Autonomous API-drift repair agent. Built during the Meta Global AI Developer Hackathon, Oct 26–Nov 4 2026.
 
 An upstream API ships a breaking change. DriftZero maps the code it breaks, has Meta's Muse Code repair it in an
