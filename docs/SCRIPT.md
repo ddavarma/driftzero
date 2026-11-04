@@ -10,7 +10,7 @@ the red `hold-outs 7/8 FAIL`, the green `8/8`, and the PR line.
 
 ## 0:00–0:12  Hook   [screen: watcher frame, iteration 1, `hold-outs 7/8`, red FAIL line; hold 2 s silent]
 
-This coding agent just reported that every test passes. Of course they did. It wrote them. The hidden test it
+This coding agent just reported that every test passes. Of course they did. It wrote or edited them. The hidden test it
 never saw said otherwise. DriftZero is the referee the agent doesn't get to see.
 
 ## 0:12–0:25  The problem   [screen: a v1→v2 changelog next to a test file that mocks v1]
@@ -48,15 +48,12 @@ Everything is in the PR. What changed. The test edits a human should look at. Th
 The sandbox id. Tokens and cost. Links to the raw event logs.
 
 Then a second opinion from a different model family. Muse Spark Open, Meta's open-weights model on Baseten,
-reads the diff plus the unchanged tests that cover the changed code. On this PR it found an unreachable except
-clause the tests never hit, confidence 0.88. Low severity, real. On our first benchmark PR it found three
-defects that the tests, the guard and the hold-outs had all missed. It also misses things, and the repo says
+reads the diff plus the unchanged tests that cover the changed code. On this PR it found an except clause that catches an error that can never reach it, in code the tests never run. Confidence 0.88. Low severity, real. In our reviewer evaluation it found three defects on an earlier PR that the tests, the guard and the hold-outs had all missed. It also misses things, and the repo says
 how often.
 
 ## 2:15–2:45  Repos we didn't write   [screen: JobTracker PR #1, then wolverine PR #1, 8 s each]
 
-Then we pointed it at two public repos we had never seen, stuck on the OpenAI Python SDK v0, with the official
-v1 migration guide as the only input. Both verified. JobTracker: 173 seconds, forty cents, five of five and seven
+Then we pointed it at two public repos we had never seen, stuck on the OpenAI Python SDK v0, with the official v1 migration guide and a version pin as the input. Both verified. JobTracker: 173 seconds, forty cents, five of five and seven
 of seven. Wolverine: 206 seconds, thirty-nine cents, six of six and seven of seven. The first attempt on each
 failed, and those runs are in the README too, including the time the agent stubbed out the SDK so its tests would
 import without it. The guard rejects that now.
@@ -64,7 +61,7 @@ import without it. The guard rejects that now.
 ## 2:45–3:00  Limits and link   [screen: README limitations, then the repo URL]
 
 Python only. Hold-outs are written per target. The reviewer is a second opinion, not a gate. A wrong hold-out
-stalls the run, and a human reads the log. Three Meta models, one loop, and a pull request you can check.
+stalls the run, and a human reads the log. Two Meta models and Muse Code, one loop, and a pull request you can check.
 github.com/ddavarma/driftzero.
 
 ---
@@ -76,7 +73,7 @@ request. A deterministic spec diff plus one Muse Spark 1.3 call produce a change
 code in an isolated worktree; a static guard rejects test tampering; a Modal sandbox runs the agent's tests and
 hold-out contract tests the agent never saw; Muse Spark Open, Meta's open-weights model, reviews the diff for
 what static analysis can't catch; then it opens a PR with every piece of evidence attached. Verified on our
-benchmark and on two public repos we did not write, for under a dollar per migration. Built solo, Oct 26–31.
+benchmark and on two public repos we did not write, for under a dollar per migration. Built solo, Oct 30–Nov 4.
 
 ## Before you submit
 
