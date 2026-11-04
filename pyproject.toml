@@ -7,6 +7,7 @@ name = "driftzero"
 version = "0.0.1"
 description = "Autonomous API-drift repair agent built on Meta's models."
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.11"
 dependencies = [
     "openai>=1.60",
